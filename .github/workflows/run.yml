@@ -2,12 +2,8 @@ name: Auto Stock Post
 
 on:
   schedule:
-    # 🕒 核心闹钟配置：每天下午 16:30 自动运行 (周一至周五)
-    # GitHub 采用世界标准时间 (UTC)，北京时间 16:30 对应 UTC 的 08:30
-    - cron: '30 8 * * 1-5'
-  
-  # 🔘 备用开关：允许你在 GitHub 网页上手动点击按钮“立刻测试运行”
-  workflow_dispatch:
+    - cron: '30 8 * * 1-5' # 周一至周五下午 16:30 自动运行
+  workflow_dispatch: # 支持手动触发测试
 
 jobs:
   run-bot:
@@ -21,12 +17,17 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: 3. 安装网络请求依赖
-        run: pip install requests
+      - name: 3. 安装画图与网络核心依赖
+        # 💡 核心修复：强制让机器人在启动时，必须先安装完 requests、matplotlib 和 numpy 三个库
+        run: pip install requests matplotlib numpy
 
-      - name: 4. 执行盯盘脚本并推送微信
-        env:
-          # 🔐 从你步骤2配置的“保险箱”里取出微信钥匙
-          MP_APPID: ${{ secrets.MP_APPID }}
-          MP_APPSECRET: ${{ secrets.MP_APPSECRET }}
+      - name: 4. 执行绘图脚本并保存结果
         run: python main.py
+
+      - name: 5. 自动把生成的图片保存并提交到你的仓库主页
+        run: |
+          git config --global user.name "StockBot"
+          git config --global user.email "stockbot@github.com"
+          git add infographic.png
+          git commit -m "自动更新今日主力资金全景长图" || exit 0
+          git push
