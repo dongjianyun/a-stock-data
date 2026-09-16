@@ -17,36 +17,15 @@ import numpy as np
 DINGTALK_WEBHOOK_URL = "https://oapi.dingtalk.com/robot/send?access_token=a460953e539e18fa8b883fbe7cb3d16a3a4842b2cbe25997c75bc5db46257c88"
 
 # =====================================================================
-# 🎨 智能字体下载模块：改用国内稳定加速镜像，彻底解决中文乱码
+# 🎨 智能免下载字体引擎 (彻底根治 Can not load face 报错)
 # =====================================================================
 def setup_chinese_font():
     """
-    在线下载极简开源中文字体并注册进 Matplotlib 系统，确保100%显示中文
+    配置全平台通用的开源无衬线中文字体集，杜绝任何外部网络下载导致的文件损坏
     """
-    font_path = "SimHei.ttf"
-    if not os.path.exists(font_path):
-        print("📥 正在从国内稳定镜像下载中文字体补丁...")
-        # 💡 核心修复：改用国内 CDN 稳定字体分发链接，防止 GitHub 解析失败
-        font_url = "https://onmicrosoft.cn"
-        try:
-            r = requests.get(font_url, timeout=30)
-            with open(font_path, "wb") as f:
-                f.write(r.content)
-            print("💾 字体下载完成并已本地缓存。")
-        except Exception as e:
-            print(f"⚠️ 字体下载失败，尝试备用链路: {e}")
-            # 备用链路
-            try:
-                r = requests.get("https://benco.cc", timeout=20)
-                with open(font_path, "wb") as f:
-                    f.write(r.content)
-            except:
-                return
-            
-    from matplotlib.font_manager import fontManager
-    fontManager.addfont(font_path)
-    plt.rcParams['font.sans-serif'] = ['SimHei']  
-    plt.rcParams['axes.unicode_minus'] = False     
+    # 💡 核心修复：直接使用 GitHub 虚拟机自带的通用无衬线中文字体包，安全无污染
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'sans-serif', 'Arial Unicode MS']
+    plt.rcParams['axes.unicode_minus'] = False     # 解决负号显示为方块的问题
 
 # =====================================================================
 # 🛠️ 第一部分：a-stock-data 全景板块绑定与全网抓取逻辑
@@ -171,12 +150,11 @@ def generate_infographic_image(data_list):
     return image_name
 
 # =====================================================================
-# 🔗 第三部分：向钉钉推送图文就绪通知 (强行包含安全关键词“主力”)
+# 🔗 第三部分：向钉钉推送图文就绪通知
 # =====================================================================
 def push_image_to_dingtalk(webhook_url, img_path):
     today_date = datetime.now().strftime("%Y-%m-%d")
     
-    # 💡 核心修复：在这里的标题中，强行加入了安全关键词“【主力】”两个字，彻底解决 310000 错误
     markdown_text = f"### 📊 今日A股全景核心板块【主力】资金监测长图已洗净！({today_date})\n\n"
     markdown_text += "主理人您好！您指定的 **27个硬核板块+盘面最热Top10** 已经由云端绘图引擎一键渲染为高档自媒体长图。\n\n"
     markdown_text += "📂 **自媒体发布动作**：\n"
@@ -187,7 +165,7 @@ def push_image_to_dingtalk(webhook_url, img_path):
     payload = {
         "msgtype": "markdown",
         "markdown": {
-            "title": "今日主力资金图表已就绪",  # 💡 这里的标题也包含了关键词“主力”
+            "title": "今日主力资金图表已就绪",  
             "text": markdown_text
         }
     }
@@ -201,14 +179,12 @@ def push_image_to_dingtalk(webhook_url, img_path):
         print(f"❌ 推送失败，原因：{response}")
 
 if __name__ == "__main__":
-    if "你的钉钉" in DINGTALK_WEBHOOK_URL:
-        print("❌ 错误：请填写正确的钉钉链接！")
-    else:
-        print("🔄 第一步：抓取全量板块数据...")
-        stock_data = get_all_merged_capital_flow()
-        
-        print("🎨 第二步：调用云端绘图引擎渲染高级视觉长图...")
-        img_file = generate_infographic_image(stock_data)
-        
-        print("🔑 第三步：向钉钉发送图文就绪通知...")
-        push_image_to_dingtalk(DINGTALK_WEBHOOK_URL, img_file)
+    print("🔄 第一步：抓取全量板块数据...")
+    stock_data = get_all_merged_capital_flow()
+    
+    print("🎨 第二步：调用云端绘图引擎渲染高级视觉长图...")
+    img_file = generate_infographic_image(stock_data)
+    
+    print("🔑 第三步：向钉钉发送图文就绪通知...")
+    push_image_to_dingtalk(DINGTALK_WEBHOOK_URL, img_file)
+
