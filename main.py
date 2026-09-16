@@ -60,8 +60,8 @@ def get_access_token():
     """
     从 GitHub Secrets 环境变量中读取钥匙，安全向微信兑换准入令牌
     """
-    appid = os.environ.get("MP_APPID")
-    secret = os.environ.get("MP_APPSECRET")
+    appid = os.environ.get("wx51e6c36abfcc6e72")
+    secret = os.environ.get("c7d90937fcd0e51e933f938d6d80212d")
     
     if not appid or not secret:
         raise ValueError("❌ 错误：未在 GitHub 变量中检测到 MP_APPID 或 MP_APPSECRET，请检查保险箱配置！")
