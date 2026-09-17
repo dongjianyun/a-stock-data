@@ -25,7 +25,7 @@ def check_is_market_closed():
     直连国内最稳定的提莫节假日API，智能识别今天大盘是否开盘
     """
     today_str = datetime.now().strftime("%Y-%m-%d")
-    url = f"https://timor.tech{today_str}"
+    url = f"https://timor.tech/api/holiday/info/{today_str}"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
         res = requests.get(url, headers=headers, timeout=10).json()
@@ -44,58 +44,55 @@ def check_is_market_closed():
 # 🛠️ 第一部分：a-stock-data 全景板块绑定与数据清洗逻辑
 # =====================================================================
 def get_all_merged_capital_flow():
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Referer": "https://eastmoney.com"
-    }
     specified_sectors = {
-        "5G概念": "BK0714", "通信技术": "BK0630", "国产芯片": "BK0891", 
-        "光通信模块": "BK0714", "CPO概念": "BK1128", "存储芯片": "BK1118", 
-        "液冷服务器": "BK1136", "光伏概念": "BK0491", "PCB": "BK0971", 
-        "商业航天": "BK1173", "小金属概念": "BK0736", "稀土永磁": "BK0591", 
-        "特高压": "BK0565", "国防军工": "BK0472", "工业母机": "BK1016", 
-        "CRO": "BK0897", "无人机": "BK0665", "创新药": "BK1106", 
-        "微盘股": "BK1158", "白酒": "BK0896", "中特估": "BK1137", 
-        "券商概念": "BK0711", "农业种植": "BK0916", "核电核能": "BK0548", 
-        "银行": "BK0475", "半导体": "BK1036", "新能源车": "BK0900"
+        "5G概念": "5G", "通信技术": "通信设备", "国产芯片": "芯片概念",
+        "光通信模块": "共封装光学(CPO)", "CPO概念": "共封装光学(CPO)", "存储芯片": "存储芯片",
+        "液冷服务器": "液冷服务器", "光伏概念": "光伏概念", "PCB": "PCB概念",
+        "商业航天": "商业航天", "小金属概念": "小金属概念", "稀土永磁": "稀土永磁",
+        "特高压": "特高压", "国防军工": "军工", "工业母机": "工业母机",
+        "CRO": "CRO概念", "无人机": "无人机", "创新药": "创新药",
+        "微盘股": None, "白酒": "白酒", "中特估": "同花顺中特估100",
+        "券商概念": "参股券商", "农业种植": "农业种植", "核电核能": "核电",
+        "银行": "银行", "半导体": "半导体", "新能源车": "新能源汽车"
     }
-    url = "https://eastmoney.com"
-    
+
     try:
-        response = requests.get(url, headers=headers, timeout=12)
-        res = response.json()
-        raw_list = res.get("data", {}).get("diff", [])
-        market_dict = {item["f12"]: item for item in raw_list if "f12" in item}
-        
-        top_10_market = []
-        for item in raw_list[:10]:
-            top_10_market.append({
-                "name": item.get("f14", "未知"),
-                "flow": item.get("f62", 0) / 100000000.0,
-                "pct": item.get("f3", 0.0)
-            })
-            
+        import akshare as ak
+        import pandas as pd
+
+        concept_df = ak.stock_fund_flow_concept(symbol="即时")
+        industry_df = ak.stock_fund_flow_industry(symbol="即时")
+        merged = pd.concat([concept_df, industry_df], ignore_index=True)
+
+        data_dict = {}
+        for _, row in merged.iterrows():
+            name = row["行业"]
+            flow = float(row["净额"])
+            pct = float(row["行业-涨跌幅"])
+            data_dict[name] = {"flow": flow, "pct": pct}
+
+        sorted_all = sorted(data_dict.items(), key=lambda x: x[1]["flow"], reverse=True)
+        top_10_market = [{"name": n, **v} for n, v in sorted_all[:10]]
+
         specified_list = []
-        for name, code in specified_sectors.items():
-            if code in market_dict:
-                match_data = market_dict[code]
-                specified_list.append({
-                    "name": name,
-                    "flow": match_data.get("f62", 0) / 100000000.0,
-                    "pct": match_data.get("f3", 0.0)
-                })
+        for display_name, actual_name in specified_sectors.items():
+            if actual_name and actual_name in data_dict:
+                d = data_dict[actual_name]
+                specified_list.append({"name": display_name, "flow": d["flow"], "pct": d["pct"]})
             else:
-                specified_list.append({"name": name, "flow": 0.0, "pct": 0.0})
-                
+                specified_list.append({"name": display_name, "flow": 0.0, "pct": 0.0})
+
         merged_dict = {}
-        for item in top_10_market: merged_dict[item["name"]] = item
-        for item in specified_list: merged_dict[item["name"]] = item
-            
+        for item in top_10_market:
+            merged_dict[item["name"]] = item
+        for item in specified_list:
+            merged_dict[item["name"]] = item
+
         final_list = list(merged_dict.values())
         final_list.sort(key=lambda x: x["flow"], reverse=True)
         return final_list
     except Exception as e:
-        print(f"⚠️ 数据接口微卡，调用预备数据集。")
+        print(f"⚠️ 数据接口微卡，调用预备数据集。原因: {e}")
         all_names = list(specified_sectors.keys())
         return [{"name": name, "flow": 12.0 - idx * 0.9, "pct": 2.5 - idx * 0.1} for idx, name in enumerate(all_names)]
 
@@ -106,8 +103,14 @@ def generate_infographic_image(data_list, report_type):
     """
     根据运行时间段自动变换图表大标题
     """
-    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'sans-serif', 'Arial Unicode MS']
-    plt.rcParams['axes.unicode_minus'] = False     
+    import matplotlib.font_manager as fm
+    try:
+        fm.fontManager.addfont('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc')
+        fm.fontManager.addfont('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc')
+    except Exception:
+        pass
+    plt.rcParams['font.sans-serif'] = ['Noto Sans CJK SC', 'DejaVu Sans', 'sans-serif']
+    plt.rcParams['axes.unicode_minus'] = False
 
     data_list = data_list[::-1]
     names = [item['name'] for item in data_list]
