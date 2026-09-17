@@ -170,60 +170,62 @@ _WECHAT_DIRECT = "https://api.weixin.qq.com"
 
 def _wechat_url(path):
     """
-    智能选路:优先走 Cloudflare Worker 代理,不通则回退直连 api.weixin.qq.com。
-    这样 TraeWork 沙箱出口 IP 变化时不会反复被微信白名单挡。
+    智能选路:优先 Cloudflare Worker 代理,失败自动回退直连。
+    不做 HEAD 探测(沙箱 TLS 会误判),直接用第一次真实 API 调用的结果判断。
     """
-    proxy_first = f"{WECHAT_BASE_URL}{path}"
-    direct_fallback = f"{_WECHAT_DIRECT}{path}"
-
-    def _try(use_proxy):
-        url = proxy_first if use_proxy else direct_fallback
-        # 发一个最轻的 HEAD 请求探测连通性
-        try:
-            r = requests.head(url, timeout=5, allow_redirects=True)
-            return True
-        except Exception:
-            return False
-
-    # 先试代理,不行就直连
-    if _try(True):
-        return proxy_first
-    if _try(False):
-        return direct_fallback
-    # 两个都不通,返回代理地址让上层拿明确报错
-    return proxy_first
+    proxy = f"{WECHAT_BASE_URL}{path}"
+    direct = f"{_WECHAT_DIRECT}{path}"
+    # 先试代理,网络异常(包括代理不可达)就回退直连
+    try:
+        r = requests.get(proxy, params={"probe": 1}, timeout=5)
+        # 代理返回任何响应(哪怕业务层报错)都算通了
+        return proxy
+    except Exception:
+        return direct
 
 
 def _get_wechat_access_token(appid, appsecret):
-    """通过 client_credential 拿到 access_token"""
-    url = _wechat_url("/cgi-bin/token")
+    """通过 client_credential 拿到 access_token(带网络错误自动回退)"""
     params = {
         "grant_type": "client_credential",
         "appid": appid,
         "secret": appsecret,
     }
-    res = requests.get(url, params=params, timeout=15).json()
-    if "access_token" not in res:
-        raise RuntimeError(f"获取 access_token 失败: {res}")
-    return res["access_token"], res.get("expires_in", 7200)
+    urls = [f"{WECHAT_BASE_URL}/cgi-bin/token", f"{_WECHAT_DIRECT}/cgi-bin/token"]
+    last_err = None
+    for url in urls:
+        try:
+            res = requests.get(url, params=params, timeout=15).json()
+            if "access_token" in res:
+                return res["access_token"], res.get("expires_in", 7200)
+            last_err = RuntimeError(f"获取 access_token 失败({url}): {res}")
+        except Exception as e:
+            last_err = e
+    raise last_err
 
 
 def _upload_wechat_material(access_token, img_path, media_type="image"):
-    """上传永久素材,返回 media_id 和 url(图文消息里 <img src> 用)"""
-    base = _wechat_url("")
-    url = f"{base}/cgi-bin/material/add_material?access_token={access_token}&type={media_type}"
+    """上传永久素材,返回 media_id 和 url(图文消息里 <img src> 用)(带网络错误自动回退)"""
     with open(img_path, "rb") as f:
         files = {"media": (os.path.basename(img_path), f, "image/png")}
-        res = requests.post(url, files=files, timeout=60).json()
-    if "media_id" not in res:
-        raise RuntimeError(f"上传素材失败: {res}")
-    return res["media_id"], res.get("url", "")
+        urls = [
+            f"{WECHAT_BASE_URL}/cgi-bin/material/add_material?access_token={access_token}&type={media_type}",
+            f"{_WECHAT_DIRECT}/cgi-bin/material/add_material?access_token={access_token}&type={media_type}",
+        ]
+        last_err = None
+        for url in urls:
+            try:
+                res = requests.post(url, files=files, timeout=60).json()
+                if "media_id" in res:
+                    return res["media_id"], res.get("url", "")
+                last_err = RuntimeError(f"上传素材失败({url}): {res}")
+            except Exception as e:
+                last_err = e
+    raise last_err
 
 
 def _add_wechat_draft(access_token, title, content, thumb_media_id):
-    """写入草稿箱,返回草稿 media_id"""
-    base = _wechat_url("")
-    url = f"{base}/cgi-bin/draft/add?access_token={access_token}"
+    """写入草稿箱,返回草稿 media_id(带网络错误自动回退)"""
     payload = {
         "articles": [
             {
@@ -236,10 +238,20 @@ def _add_wechat_draft(access_token, title, content, thumb_media_id):
             }
         ]
     }
-    res = requests.post(url, json=payload, timeout=30).json()
-    if "media_id" not in res:
-        raise RuntimeError(f"草稿创建失败: {res}")
-    return res["media_id"]
+    urls = [
+        f"{WECHAT_BASE_URL}/cgi-bin/draft/add?access_token={access_token}",
+        f"{_WECHAT_DIRECT}/cgi-bin/draft/add?access_token={access_token}",
+    ]
+    last_err = None
+    for url in urls:
+        try:
+            res = requests.post(url, json=payload, timeout=30).json()
+            if "media_id" in res:
+                return res["media_id"]
+            last_err = RuntimeError(f"草稿创建失败({url}): {res}")
+        except Exception as e:
+            last_err = e
+    raise last_err
 
 
 def push_image_to_wechat_draft(appid, appsecret, img_path, report_type):
