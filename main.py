@@ -5,7 +5,41 @@ import subprocess
 import time
 from datetime import datetime
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import numpy as np
+
+# =====================================================================
+# 🔤 运行时自动确保中文字体可用(TraeWork 定时任务用全新容器,字体每次都要装)
+# =====================================================================
+def _ensure_chinese_font():
+    """首次运行自动安装 fonts-noto-cjk 并清 matplotlib 字体缓存"""
+    # 检查是否已有 Noto Sans CJK SC
+    cjk_fonts = [f for f in fm.fontManager.ttflist if 'Noto Sans CJK SC' in f.name and f.style == 'normal']
+    if cjk_fonts:
+        return cjk_fonts[0].fname  # 已安装,直接返回路径
+
+    # 尝试 apt-get 安装
+    print("🔤 首次运行,正在安装中文字体 fonts-noto-cjk...")
+    try:
+        subprocess.run(["apt-get", "update", "-qq"], check=True, timeout=60, capture_output=True)
+        subprocess.run(["apt-get", "install", "-y", "-qq", "fonts-noto-cjk"], check=True, timeout=120, capture_output=True)
+        subprocess.run(["fc-cache", "-f"], check=False)
+        # 清 matplotlib 字体缓存
+        cache_dir = matplotlib.get_cachedir()
+        subprocess.run(["rm", "-rf", os.path.join(cache_dir, "fontlist*.json")], check=False)
+        # 重载字体管理器
+        fm.fontManager = fm.FontManager()
+        print("✅ 中文字体安装完成")
+    except Exception as e:
+        print(f"⚠️ 字体安装失败: {e},图片中文可能显示为方框")
+
+    # 再查一次
+    cjk_fonts = [f for f in fm.fontManager.ttflist if 'Noto Sans CJK SC' in f.name and f.style == 'normal']
+    return cjk_fonts[0].fname if cjk_fonts else None
+
+
+# 模块加载时就装好
+_CHINESE_FONT_PATH = _ensure_chinese_font()
 
 # =====================================================================
 # 🚨 【小白专区】请在这里准确填写你的个人配置
@@ -105,6 +139,10 @@ def generate_infographic_image(data_list, report_type):
     """
     根据运行时间段自动变换图表大标题
     """
+    # 强制用 Noto Sans CJK SC 字体文件(不是只靠字体名匹配)
+    if _CHINESE_FONT_PATH:
+        fp = fm.FontProperties(fname=_CHINESE_FONT_PATH)
+        plt.rcParams['font.family'] = fp.get_name()
     plt.rcParams['font.sans-serif'] = ['Noto Sans CJK SC', 'Noto Sans CJK TC', 'SimHei', 'Microsoft YaHei', 'DejaVu Sans', 'sans-serif']
     plt.rcParams['axes.unicode_minus'] = False     
 
