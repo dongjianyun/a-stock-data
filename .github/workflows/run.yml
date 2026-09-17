@@ -17,18 +17,25 @@ jobs:
       - name: 1. 签出仓库代码
         uses: actions/checkout@v4
 
-      - name: 2. 安装 Python 环境
+      - name: 2. 安装中文字体(关键!否则 matplotlib 中文变方框)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-noto-cjk
+          fc-cache -f
+          rm -rf ~/.cache/matplotlib/fontlist*.json 2>/dev/null || true
+
+      - name: 3. 安装 Python 环境
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: 3. 安装画图与网络核心依赖
+      - name: 4. 安装画图与网络核心依赖
         run: pip install requests matplotlib numpy
 
-      - name: 4. 执行绘图脚本并保存结果
+      - name: 5. 执行绘图脚本并保存结果
         run: python main.py
 
-      - name: 5. 自动把生成的图片保存并提交到你的仓库主页
+      - name: 6. 自动把生成的图片保存并提交到你的仓库主页
         run: |
           git config --global user.name "StockBot"
           git config --global user.email "stockbot@github.com"
