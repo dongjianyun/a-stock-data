@@ -81,8 +81,8 @@ def check_is_market_closed():
 # =====================================================================
 def get_all_merged_capital_flow():
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Referer": "https://eastmoney.com"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://data.eastmoney.com/bkzj/hy.html"
     }
     specified_sectors = {
         "5G概念": "BK0714", "通信技术": "BK0630", "国产芯片": "BK0891", 
@@ -95,13 +95,24 @@ def get_all_merged_capital_flow():
         "券商概念": "BK0711", "农业种植": "BK0916", "核电核能": "BK0548", 
         "银行": "BK0475", "半导体": "BK1036", "新能源车": "BK0900"
     }
-    url = "https://eastmoney.com"
+    # 东方财富板块主力资金 API (m:90+t:2 = 全部行业板块,按主力净流入 f62 排序)
+    url = "https://push2.eastmoney.com/api/qt/clist/get"
+    params = {
+        "pn": 1, "pz": 50, "po": 1, "np": 1,
+        "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+        "fltt": 2, "invt": 2, "fid": "f62",
+        "fs": "m:90+t:2",
+        "fields": "f12,f14,f62,f3"
+    }
     
     try:
-        response = requests.get(url, headers=headers, timeout=12)
+        response = requests.get(url, headers=headers, params=params, timeout=15)
+        response.raise_for_status()
         res = response.json()
         raw_list = res.get("data", {}).get("diff", [])
         market_dict = {item["f12"]: item for item in raw_list if "f12" in item}
+        
+        print(f"📡 东财 API 拿到 {len(raw_list)} 个板块,开始清洗匹配...")
         
         top_10_market = []
         for item in raw_list[:10]:
@@ -129,9 +140,13 @@ def get_all_merged_capital_flow():
             
         final_list = list(merged_dict.values())
         final_list.sort(key=lambda x: x["flow"], reverse=True)
+        # 打印前5条验证
+        for item in final_list[:5]:
+            print(f"   📈 {item['name']}: {item['flow']:+.2f}亿 ({item['pct']:+.2f}%)")
         return final_list
     except Exception as e:
-        print(f"⚠️ 数据接口微卡，调用预备数据集。")
+        print(f"⚠️ 东财接口失败: {type(e).__name__}: {e}")
+        print(f"⚠️ 调用预备 mock 数据集(GitHub Actions 环境会拿到真实数据)")
         all_names = list(specified_sectors.keys())
         return [{"name": name, "flow": 12.0 - idx * 0.9, "pct": 2.5 - idx * 0.1} for idx, name in enumerate(all_names)]
 
