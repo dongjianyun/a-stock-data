@@ -239,8 +239,19 @@ def _upload_to_gitee(img_path):
         resp = requests.put(put_url, json=put_data, timeout=30)
         result = resp.json()
         if resp.status_code in (200, 201):
+            # Gitee raw 会 302 重定向到带签名的 raw.giteeusercontent.com
+            # 钉钉不 follow 302,所以我们自己 follow 拿到签名直链(200 + image/png)
             raw_url = f"https://gitee.com/{GITEE_USERNAME}/{GITEE_REPO}/raw/{GITEE_BRANCH}/{filename}"
-            print(f"📤 图片已上传 Gitee: {raw_url}")
+            try:
+                follow = requests.get(raw_url, allow_redirects=True, timeout=15)
+                final_url = follow.url
+                if follow.status_code == 200 and 'image/' in follow.headers.get('content-type', ''):
+                    print(f"📤 图片已上传,签名直链: {final_url[:80]}...")
+                    return final_url  # 返回签名直链(钉钉能拉)
+            except Exception:
+                pass
+            # 兜底:返回 raw_url(钉钉可能拉不到)
+            print(f"📤 图片已上传 Gitee(签名获取失败): {raw_url}")
             return raw_url
         print(f"⚠️ Gitee 上传失败: {resp.status_code} {result.get('message','')}")
     except Exception as e:
