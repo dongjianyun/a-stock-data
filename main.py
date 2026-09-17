@@ -202,22 +202,53 @@ def generate_infographic_image(data_list, report_type):
 # =====================================================================
 # 🔗 第三部分：组装时段特定的通知送达钉钉群机器人
 # =====================================================================
+def _upload_to_catbox(img_path, expire_hours=24):
+    """把图片上传到 catbox.moe(litterbox),返回公网可访问 URL"""
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Origin": "https://catbox.moe",
+            "Referer": "https://catbox.moe/",
+        }
+        with open(img_path, "rb") as f:
+            resp = requests.post(
+                "https://litterbox.catbox.moe/resources/internals/api.php",
+                data={"reqtype": "fileupload", "time": f"{expire_hours}h"},
+                files={"fileToUpload": (os.path.basename(img_path), f, "image/png")},
+                headers=headers,
+                timeout=30,
+            )
+        if resp.status_code == 200 and resp.text.startswith("http"):
+            print(f"📤 图片已上传 catbox: {resp.text}")
+            return resp.text
+        print(f"⚠️ catbox 上传被拒: status={resp.status_code}, body={resp.text[:100]}")
+    except Exception as e:
+        print(f"⚠️ catbox 上传失败: {e}")
+    return None
+
+
 def push_image_to_dingtalk(webhook_url, img_path, report_type):
     today_date = datetime.now().strftime("%Y-%m-%d")
     time_label = "【午盘】中场" if report_type == "midday" else "【收盘】全天"
 
-    # 长图 CDN 链接(依赖 infographic.png 已 push 到 GitHub 仓库 main 分支)
-    cdn_image_url = f"https://cdn.jsdelivr.net/gh/{GITHUB_USERNAME}/{GITHUB_REPO}@main/{img_path}?t={int(time.time())}"
+    # 优先上传 catbox,失败再回退 GitHub jsDelivr CDN
+    print("📤 上传长图到 catbox 临时图床...")
+    catbox_url = _upload_to_catbox(img_path)
+    if catbox_url:
+        cdn_image_url = catbox_url
+    else:
+        cdn_image_url = f"https://cdn.jsdelivr.net/gh/{GITHUB_USERNAME}/{GITHUB_REPO}@main/{img_path}?t={int(time.time())}"
+        print("⚠️ catbox 不可用,回退到 GitHub CDN(需要手动 push infographic.png)")
 
     markdown_text = f"### 📊 今日A股全景核心板块{time_label}【主力】资金大长图已洗净！\n"
     markdown_text += f"**快报日期**：{today_date}\n"
     markdown_text += "━━━━━━━━━━━━━━━━━━━━\n"
     markdown_text += f"![主力资金全景长图]({cdn_image_url})\n\n"
     markdown_text += "📂 **自媒体运营发布动作**：\n"
-    markdown_text += f"1. 长按上方群聊里的{time_label}图表，直接保存至手机相册。\n"
-    markdown_text += "2. 打开公众号后台，直接插入最新动态文章，一秒群发抢占头条！\n"
+    markdown_text += f"1. 长按上方群聊里的{time_label}图表,直接保存至手机相册。\n"
+    markdown_text += "2. 打开公众号后台,直接插入最新动态文章,一秒群发抢占头条！\n"
     markdown_text += "━━━━━━━━━━━━━━━━━━━━\n"
-    markdown_text += "> ⚠️ *免责声明：本内容仅供客观数据事实复盘，不构成任何投资买卖建议。*"
+    markdown_text += "> ⚠️ *免责声明:本内容仅供客观数据事实复盘,不构成任何投资买卖建议。*"
 
     payload = {
         "msgtype": "markdown",
@@ -231,39 +262,26 @@ def push_image_to_dingtalk(webhook_url, img_path, report_type):
     response = requests.post(webhook_url, data=json.dumps(payload), headers=headers).json()
 
     if response.get("errcode") == 0:
-        print(f"🎉【{time_label}特刊完美收官】简报已安全送达钉钉群聊！")
+        print(f"🎉【{time_label}特刊完美收官】简报已安全送达钉钉群聊!")
     else:
-        print(f"❌ 钉钉拒绝，原因：{response}")
+        print(f"❌ 钉钉拒绝,原因:{response}")
 
 
 if __name__ == "__main__":
     print("📅 [验证开始] 正在检测大盘是否处于开盘交易状态...")
     if check_is_market_closed():
-        print("😴 检测到今天非交易日，自动化工作流优雅休眠退出。")
+        print("😴 检测到今天非交易日,自动化工作流优雅休眠退出。")
     else:
-        # 💡 智能化总线判断：当前是中午还是下午收盘
+        # 💡 智能化总线判断:当前是中午还是下午收盘
         current_hour = datetime.now().hour
         # 北京时间 11:30~13:30 之间运行则判定为午盘
         current_report_type = "midday" if 11 <= current_hour < 14 else "closing"
 
-        print(f"🔄 第一步：启动数据清洗进程，当前判定时段为: {current_report_type}")
+        print(f"🔄 第一步:启动数据清洗进程,当前判定时段为: {current_report_type}")
         stock_data = get_all_merged_capital_flow()
 
-        print("🎨 第二步：调用零轴中置绘图引擎渲染高级长图...")
+        print("🎨 第二步:调用零轴中置绘图引擎渲染高级长图...")
         img_file = generate_infographic_image(stock_data, current_report_type)
 
-        print("🔑 第三步：推送长图简报到钉钉群聊...")
+        print("🔑 第三步:上传长图 + 推送简报到钉钉群聊...")
         push_image_to_dingtalk(DINGTALK_WEBHOOK_URL, img_file, current_report_type)
-
-        # 📤 第四步：尝试把长图 push 到 GitHub(让钉钉 markdown 里的 CDN 图片链接生效)
-        print("📦 第四步：推送长图到 GitHub 仓库...")
-        try:
-            subprocess.run(["git", "config", "--global", "user.name", "StockBot"], check=True)
-            subprocess.run(["git", "config", "--global", "user.email", "stockbot@github.com"], check=True)
-            subprocess.run(["git", "add", img_file], check=True)
-            subprocess.run(["git", "commit", "-m", f"auto update {img_file} ({current_report_type})"],
-                           capture_output=True, check=False)
-            subprocess.run(["git", "push"], check=True, timeout=30)
-            print("✅ 长图已推送到 GitHub,钉钉图片链接 5 秒内生效。")
-        except Exception as e:
-            print(f"⚠️ GitHub push 跳过(无认证或网络问题),钉钉 markdown 图片链接可能暂不可用: {e}")

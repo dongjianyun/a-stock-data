@@ -1,14 +1,8 @@
 name: Auto Stock Post
 
 on:
-  schedule:
-    # 🕒 触发器 1：中午 11:35 自动触发午盘数据（北京时间 11:35 对应世界标准时 UTC 的 03:35）
-    - cron: '35 3 * * 1-5'
-    
-    # 🕒 触发器 2：下午 16:30 自动触发收盘数据（北京时间 16:30 对应世界标准时 UTC 的 08:30）
-    - cron: '30 8 * * 1-5'
-    
-  workflow_dispatch: # 依然支持在网页上手动随时测试点击
+  # 定时任务已迁移到 TraeWork Schedule,此文件仅保留手动触发用于调试
+  workflow_dispatch:
 
 jobs:
   run-bot:
