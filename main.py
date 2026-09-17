@@ -119,7 +119,7 @@ def get_all_merged_capital_flow():
         "农业种植": "农业种植",
         "核电核能": "核电",
         "银行": "参股银行",
-        "半导体": "芯片概念",            # 和国产芯片同映射
+        "半导体": None,                    # 走行业接口匹配"半导体"
         "新能源车": "新能源汽车",
     }
 
@@ -158,13 +158,15 @@ def get_all_merged_capital_flow():
         matched_count = 0
 
         for user_name, eastmoney_name in SECTOR_TO_EASTMONEY.items():
-            # 1) 先用精确映射
             match = None
-            if eastmoney_name and eastmoney_name in concept_map:
-                match = eastmoney_name
-            else:
-                # 2) 再模糊匹配
-                match = _fuzzy_match(user_name, concept_names)
+            # 如果映射值明确给了概念名,才去概念接口找
+            if eastmoney_name is not None:
+                # 1) 先用精确映射
+                if eastmoney_name in concept_map:
+                    match = eastmoney_name
+                else:
+                    # 2) 再模糊匹配(只对有映射值的做)
+                    match = _fuzzy_match(user_name, concept_names)
 
             if match:
                 flow, pct = concept_map[match]
@@ -172,7 +174,7 @@ def get_all_merged_capital_flow():
                 matched_count += 1
                 print(f"  ✅ {user_name} -> {match} ({flow:+.2f}亿)")
             else:
-                # 3) 匹配不到:去东财行业资金流里再试
+                # 3) 映射值为 None 或概念没匹配到 → 去东财行业资金流里试
                 industry_df = None
                 for a in range(3):
                     try:
