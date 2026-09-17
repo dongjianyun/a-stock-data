@@ -12,8 +12,10 @@ import numpy as np
 # 微信公众号凭据(已替换原钉钉 Webhook)
 WECHAT_APPID = "wx51e6c36abfcc6e72"
 WECHAT_APPSECRET = "c7d90937fcd0e51e933f938d6d80212d"
+# Cloudflare Worker 代理(解决 TraeWork 沙箱出口 IP 浮动导致微信白名单频繁失效的问题)
+WECHAT_BASE_URL = "https://wechat-proxy.dzy2057978185.workers.dev"
 # 图文素材永久素材 CDN 前缀(用于草稿正文 <img src> 渲染)
-WECHAT_CDN_PREFIX = "https://api.weixin.qq.com/cgi-bin/material/get?access_token={token}&media_id={media_id}"
+WECHAT_CDN_PREFIX = f"{WECHAT_BASE_URL}/cgi-bin/material/get?access_token={{token}}&media_id={{media_id}}"
 
 # =====================================================================
 # 📅 核心模块：中国法定节假日休市智能拦截引擎
@@ -165,7 +167,7 @@ def generate_infographic_image(data_list, report_type):
 # =====================================================================
 def _get_wechat_access_token(appid, appsecret):
     """通过 client_credential 拿到 access_token"""
-    url = "https://api.weixin.qq.com/cgi-bin/token"
+    url = f"{WECHAT_BASE_URL}/cgi-bin/token"
     params = {
         "grant_type": "client_credential",
         "appid": appid,
@@ -179,7 +181,7 @@ def _get_wechat_access_token(appid, appsecret):
 
 def _upload_wechat_material(access_token, img_path, media_type="image"):
     """上传永久素材,返回 media_id 和 url(图文消息里 <img src> 用)"""
-    url = f"https://api.weixin.qq.com/cgi-bin/material/add_material?access_token={access_token}&type={media_type}"
+    url = f"{WECHAT_BASE_URL}/cgi-bin/material/add_material?access_token={access_token}&type={media_type}"
     with open(img_path, "rb") as f:
         files = {"media": (os.path.basename(img_path), f, "image/png")}
         res = requests.post(url, files=files, timeout=60).json()
@@ -190,7 +192,7 @@ def _upload_wechat_material(access_token, img_path, media_type="image"):
 
 def _add_wechat_draft(access_token, title, content, thumb_media_id):
     """写入草稿箱,返回草稿 media_id"""
-    url = f"https://api.weixin.qq.com/cgi-bin/draft/add?access_token={access_token}"
+    url = f"{WECHAT_BASE_URL}/cgi-bin/draft/add?access_token={access_token}"
     payload = {
         "articles": [
             {
