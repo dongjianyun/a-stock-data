@@ -2,8 +2,13 @@ name: Auto Stock Post
 
 on:
   schedule:
-    - cron: '30 8 * * 1-5' # 周一至周五下午 16:30 自动运行
-  workflow_dispatch: # 支持手动触发测试
+    # 🕒 触发器 1：中午 11:35 自动触发午盘数据（北京时间 11:35 对应世界标准时 UTC 的 03:35）
+    - cron: '35 3 * * 1-5'
+    
+    # 🕒 触发器 2：下午 16:30 自动触发收盘数据（北京时间 16:30 对应世界标准时 UTC 的 08:30）
+    - cron: '30 8 * * 1-5'
+    
+  workflow_dispatch: # 依然支持在网页上手动随时测试点击
 
 jobs:
   run-bot:
@@ -18,7 +23,6 @@ jobs:
           python-version: '3.10'
 
       - name: 3. 安装画图与网络核心依赖
-        # 💡 核心修复：强制让机器人在启动时，必须先安装完 requests、matplotlib 和 numpy 三个库
         run: pip install requests matplotlib numpy
 
       - name: 4. 执行绘图脚本并保存结果
