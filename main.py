@@ -195,7 +195,7 @@ def _add_wechat_draft(access_token, title, content, thumb_media_id):
         "articles": [
             {
                 "title": title,
-                "author": "A 股主力资金监测",
+                "author": "主力资金",
                 "content": content,
                 "thumb_media_id": thumb_media_id,
                 "need_open_comment": 0,
