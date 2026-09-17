@@ -49,9 +49,9 @@ DINGTALK_WEBHOOK_URL = "https://oapi.dingtalk.com/robot/send?access_token=a46095
 
 # Gitee 国内图床配置(全程国内网络,钉钉能拉图)
 # 请在 https://gitee.com 创建仓库 + 生成私人令牌(projects 权限)后填下面两项
-GITEE_USERNAME = "dongjianyun"
+GITEE_USERNAME = "thats-awesome"
 GITEE_REPO = "a-stock-data"
-GITEE_TOKEN = ""  # TODO: 填入你的 Gitee 私人令牌
+GITEE_TOKEN = ""  # TODO: 填入你的 Gitee 私人令牌(https://gitee.com/profile/personal_access_tokens 生成,勾 projects 权限)
 GITEE_BRANCH = "master"  # Gitee 默认分支是 master,如果建仓库时选了 main 就改这里
 
 # =====================================================================
