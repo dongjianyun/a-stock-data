@@ -165,9 +165,38 @@ def generate_infographic_image(data_list, report_type):
 # =====================================================================
 # 🔗 第三部分：推送图文草稿到微信公众号草稿箱
 # =====================================================================
+_WECHAT_DIRECT = "https://api.weixin.qq.com"
+
+
+def _wechat_url(path):
+    """
+    智能选路:优先走 Cloudflare Worker 代理,不通则回退直连 api.weixin.qq.com。
+    这样 TraeWork 沙箱出口 IP 变化时不会反复被微信白名单挡。
+    """
+    proxy_first = f"{WECHAT_BASE_URL}{path}"
+    direct_fallback = f"{_WECHAT_DIRECT}{path}"
+
+    def _try(use_proxy):
+        url = proxy_first if use_proxy else direct_fallback
+        # 发一个最轻的 HEAD 请求探测连通性
+        try:
+            r = requests.head(url, timeout=5, allow_redirects=True)
+            return True
+        except Exception:
+            return False
+
+    # 先试代理,不行就直连
+    if _try(True):
+        return proxy_first
+    if _try(False):
+        return direct_fallback
+    # 两个都不通,返回代理地址让上层拿明确报错
+    return proxy_first
+
+
 def _get_wechat_access_token(appid, appsecret):
     """通过 client_credential 拿到 access_token"""
-    url = f"{WECHAT_BASE_URL}/cgi-bin/token"
+    url = _wechat_url("/cgi-bin/token")
     params = {
         "grant_type": "client_credential",
         "appid": appid,
@@ -181,7 +210,8 @@ def _get_wechat_access_token(appid, appsecret):
 
 def _upload_wechat_material(access_token, img_path, media_type="image"):
     """上传永久素材,返回 media_id 和 url(图文消息里 <img src> 用)"""
-    url = f"{WECHAT_BASE_URL}/cgi-bin/material/add_material?access_token={access_token}&type={media_type}"
+    base = _wechat_url("")
+    url = f"{base}/cgi-bin/material/add_material?access_token={access_token}&type={media_type}"
     with open(img_path, "rb") as f:
         files = {"media": (os.path.basename(img_path), f, "image/png")}
         res = requests.post(url, files=files, timeout=60).json()
@@ -192,12 +222,13 @@ def _upload_wechat_material(access_token, img_path, media_type="image"):
 
 def _add_wechat_draft(access_token, title, content, thumb_media_id):
     """写入草稿箱,返回草稿 media_id"""
-    url = f"{WECHAT_BASE_URL}/cgi-bin/draft/add?access_token={access_token}"
+    base = _wechat_url("")
+    url = f"{base}/cgi-bin/draft/add?access_token={access_token}"
     payload = {
         "articles": [
             {
                 "title": title,
-                "author": "主力资金",
+                "author": "主力",
                 "content": content,
                 "thumb_media_id": thumb_media_id,
                 "need_open_comment": 0,
