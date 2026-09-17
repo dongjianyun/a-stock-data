@@ -47,12 +47,11 @@ _CHINESE_FONT_PATH = _ensure_chinese_font()
 # 钉钉群机器人 Webhook
 DINGTALK_WEBHOOK_URL = "https://oapi.dingtalk.com/robot/send?access_token=a460953e539e18fa8b883fbe7cb3d16a3a4842b2cbe25997c75bc5db46257c88"
 
-# GitHub + jsDelivr CDN 图床配置(国内秒开,永不 403,钉钉完美兼容)
-# 仓库必须是 public,jsDelivr 自动 CDN 加速
-GITHUB_USERNAME = "dongjianyun"
-GITHUB_REPO = "a-stock-data"
-GITHUB_TOKEN = ""  # ⚠️ 你的 GitHub Personal Access Token(classic,勾 repo 权限),没这个就没法上传新图!
-GITHUB_BRANCH = "main"
+# Gitee 国内图床配置(仓库已改为 public,国内秒开)
+GITEE_USERNAME = "thats-awesome"
+GITEE_REPO = "a-stock-data"
+GITEE_TOKEN = "4b6548b05c10a4d9746064cefa583c40"
+GITEE_BRANCH = "main"
 
 # =====================================================================
 # 📅 核心模块：中国法定节假日休市智能拦截引擎
@@ -206,19 +205,19 @@ def generate_infographic_image(data_list, report_type):
 # =====================================================================
 # 🔗 第三部分：组装时段特定的通知送达钉钉群机器人
 # =====================================================================
-def _upload_to_github(img_path):
-    """通过 GitHub REST API 上传图片,返回 jsDelivr CDN URL(国内秒开,钉钉完美兼容)"""
+def _upload_to_gitee(img_path):
+    """通过 Gitee REST API 上传图片,返回公网 raw 链接(仓库已 public,钉钉能拉图)"""
     import base64
-    if not GITHUB_TOKEN:
-        print("⚠️ GITHUB_TOKEN 未配置,跳过 GitHub 上传")
+    if not GITEE_TOKEN:
+        print("⚠️ GITEE_TOKEN 未配置,跳过 Gitee 上传")
         return None
     try:
         filename = os.path.basename(img_path)
         # 先查文件是否已存在(更新需要 sha)
         sha = None
-        check_url = f"https://api.github.com/repos/{GITHUB_USERNAME}/{GITHUB_REPO}/contents/{filename}"
-        headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
-        check_resp = requests.get(check_url, headers=headers, params={"ref": GITHUB_BRANCH}, timeout=10)
+        check_url = f"https://gitee.com/api/v5/repos/{GITEE_USERNAME}/{GITEE_REPO}/contents/{filename}"
+        check_params = {"access_token": GITEE_TOKEN, "ref": GITEE_BRANCH}
+        check_resp = requests.get(check_url, params=check_params, timeout=10)
         if check_resp.status_code == 200:
             sha = check_resp.json().get("sha")
 
@@ -227,33 +226,25 @@ def _upload_to_github(img_path):
             content_b64 = base64.b64encode(f.read()).decode()
 
         # PUT 上传/更新
+        put_url = f"https://gitee.com/api/v5/repos/{GITEE_USERNAME}/{GITEE_REPO}/contents/{filename}"
         put_data = {
+            "access_token": GITEE_TOKEN,
             "message": f"auto update {filename}",
             "content": content_b64,
-            "branch": GITHUB_BRANCH,
+            "branch": GITEE_BRANCH,
         }
         if sha:
             put_data["sha"] = sha  # 更新时必须带 sha
 
-        resp = requests.put(check_url, headers=headers, json=put_data, timeout=30)
+        resp = requests.put(put_url, json=put_data, timeout=30)
         result = resp.json()
         if resp.status_code in (200, 201):
-            # 用 jsDelivr CDN 加速(国内秒开,自动缓存)
-            cdn_url = f"https://cdn.jsdelivr.net/gh/{GITHUB_USERNAME}/{GITHUB_REPO}@{GITHUB_BRANCH}/{filename}"
-            # 主动清 jsDelivr 缓存(默认 7 天缓存,不清会显示旧图)
-            try:
-                purge_resp = requests.post(
-                    "https://purge.jsdelivr.net/gh/" + cdn_url.replace("https://cdn.jsdelivr.net/", ""),
-                    timeout=10
-                )
-                print(f"🗑️  jsDelivr 缓存已刷新: HTTP {purge_resp.status_code}")
-            except Exception:
-                print("⚠️ jsDelivr 缓存刷新失败,等 5 分钟自动刷新")
-            print(f"📤 图片已上传 GitHub,jsDelivr CDN 链接: {cdn_url}")
-            return cdn_url
-        print(f"⚠️ GitHub 上传失败: {resp.status_code} {result.get('message','')}")
+            raw_url = f"https://gitee.com/{GITEE_USERNAME}/{GITEE_REPO}/raw/{GITEE_BRANCH}/{filename}"
+            print(f"📤 图片已上传 Gitee: {raw_url}")
+            return raw_url
+        print(f"⚠️ Gitee 上传失败: {resp.status_code} {result.get('message','')}")
     except Exception as e:
-        print(f"⚠️ GitHub 上传异常: {e}")
+        print(f"⚠️ Gitee 上传异常: {e}")
     return None
 
 
@@ -261,11 +252,11 @@ def push_image_to_dingtalk(webhook_url, img_path, report_type):
     today_date = datetime.now().strftime("%Y-%m-%d")
     time_label = "【午盘】中场" if report_type == "midday" else "【收盘】全天"
 
-    # 用 GitHub + jsDelivr CDN 图床(国内秒开,永不封禁)
-    print("📤 上传长图到 GitHub + jsDelivr CDN...")
-    cdn_image_url = _upload_to_github(img_path)
+    # 用 Gitee 国内图床(仓库已 public)
+    print("📤 上传长图到 Gitee 国内图床...")
+    cdn_image_url = _upload_to_gitee(img_path)
     if not cdn_image_url:
-        print("❌ 图片上传失败,GITHUB_TOKEN 未配置或 GitHub API 报错,无法发送钉钉消息")
+        print("❌ 图片上传失败,GITEE_TOKEN 未配置或 Gitee API 报错,无法发送钉钉消息")
         return
 
     markdown_text = f"### 📊 今日A股全景核心板块{time_label}【主力】资金大长图已洗净！\n"
