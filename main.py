@@ -105,7 +105,7 @@ def generate_infographic_image(data_list, report_type):
     """
     根据运行时间段自动变换图表大标题
     """
-    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'sans-serif', 'Arial Unicode MS']
+    plt.rcParams['font.sans-serif'] = ['Noto Sans CJK SC', 'Noto Sans CJK TC', 'SimHei', 'Microsoft YaHei', 'DejaVu Sans', 'sans-serif']
     plt.rcParams['axes.unicode_minus'] = False     
 
     data_list = data_list[::-1]
