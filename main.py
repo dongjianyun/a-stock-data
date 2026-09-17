@@ -176,9 +176,9 @@ def generate_infographic_image(data_list, report_type):
     ax.set_facecolor('#ffffff')
     
     colors = ['#e53e3e' if x >= 0 else '#38a169' for x in flows]
-    bars = ax.barh(names, flows, color=colors, edgecolor='none', height=0.65, alpha=0.95)
-    
-    ax.axvline(0, color='#4a5568', linestyle='-', linewidth=1.5, alpha=0.8)
+    # 所有长条都画在正轴上(用绝对值),颜色区分方向
+    abs_flows = [abs(x) for x in flows]
+    bars = ax.barh(names, abs_flows, color=colors, edgecolor='none', height=0.65, alpha=0.95)
     
     for spine in ['top', 'right', 'bottom', 'left']:
         ax.spines[spine].set_visible(False)
@@ -187,15 +187,9 @@ def generate_infographic_image(data_list, report_type):
     
     for bar, flow, pct in zip(bars, flows, pcts):
         width = bar.get_width()
-        sign = "+" if flow >= 0 else ""
-        label_text = f" {sign}{flow:.2f}亿 ({pct:+.2f}%)"
-        
-        if flow >= 0:
-            ax.text(width, bar.get_y() + bar.get_height()/2, label_text,
-                    va='center', ha='left', fontsize=9, color='#2d3748', fontweight='bold')
-        else:
-            ax.text(width, bar.get_y() + bar.get_height()/2, label_text,
-                    va='center', ha='right', fontsize=9, color='#1a202c', fontweight='bold')
+        label_text = f" {flow:+.2f}亿 ({pct:+.2f}%)"
+        ax.text(width, bar.get_y() + bar.get_height()/2, label_text,
+                va='center', ha='left', fontsize=9, color='#2d3748', fontweight='bold')
 
     today_date = datetime.now().strftime("%Y-%m-%d")
     
