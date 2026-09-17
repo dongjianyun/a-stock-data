@@ -51,8 +51,8 @@ DINGTALK_WEBHOOK_URL = "https://oapi.dingtalk.com/robot/send?access_token=a46095
 # 请在 https://gitee.com 创建仓库 + 生成私人令牌(projects 权限)后填下面两项
 GITEE_USERNAME = "thats-awesome"
 GITEE_REPO = "a-stock-data"
-GITEE_TOKEN = ""  # TODO: 填入你的 Gitee 私人令牌(https://gitee.com/profile/personal_access_tokens 生成,勾 projects 权限)
-GITEE_BRANCH = "master"  # Gitee 默认分支是 master,如果建仓库时选了 main 就改这里
+GITEE_TOKEN = "4b6548b05c10a4d9746064cefa583c40"
+GITEE_BRANCH = "main"  # 你的 Gitee 仓库默认分支是 main
 
 # =====================================================================
 # 📅 核心模块：中国法定节假日休市智能拦截引擎
