@@ -196,7 +196,7 @@ def get_all_merged_capital_flow():
     except Exception as e:
         print(f"⚠️ AKShare 失败: {type(e).__name__}: {e}")
         print(f"⚠️ 调用预备 mock 数据集")
-        all_names = list(SECTOR_ALIASES.keys())
+        all_names = list(SECTOR_TO_EASTMONEY.keys())
         return [{"name": name, "flow": 12.0 - idx * 0.9, "pct": 2.5 - idx * 0.1} for idx, name in enumerate(all_names)]
 
 # =====================================================================
@@ -241,11 +241,12 @@ def generate_infographic_image(data_list, report_type):
                 va='center', ha='left', fontsize=9, color='#2d3748', fontweight='bold')
 
     today_date = datetime.now().strftime("%Y-%m-%d")
+    now_time = datetime.now().strftime("%H:%M")
     
-    # 💡 核心修改：根据运行时间自动切换午盘/收盘小标题
-    title_suffix = "【午盘特刊】中场异动扫描" if report_type == "midday" else "【收盘特刊】全天战报复盘"
+    # 根据 report_type 变换小标题
+    main_label, sub_label = REPORT_LABEL.get(report_type, ("收盘", "收盘战报复盘"))
     
-    plt.title(f"A股核心板块主力资金监测全景图\n数据快报: {today_date} {title_suffix}", 
+    plt.title(f"A股核心板块主力资金监测全景图\n数据时间: {today_date} {now_time}  【{main_label}】{sub_label}", 
               fontsize=14, pad=22, color='#1a202c', fontweight='bold', loc='center')
     
     plt.xlabel("主力资金流动分布 (单位: 亿元)   [红色流入 🔺 绿色流出 🔻]\n\n⚠️ 免责声明：本内容仅作为客观市场现象的数据归纳，绝非投资建议，据此操作风险自担。", 
@@ -323,8 +324,10 @@ def _upload_to_gitee(img_path):
 
 
 def push_image_to_dingtalk(webhook_url, img_path, report_type):
-    today_date = datetime.now().strftime("%Y-%m-%d")
-    time_label = "【午盘】中场" if report_type == "midday" else "【收盘】全天"
+    now = datetime.now()
+    today_date = now.strftime("%Y-%m-%d")
+    now_time = now.strftime("%H:%M")
+    main_label, sub_label = REPORT_LABEL.get(report_type, ("收盘", ""))
 
     # 用 Gitee 国内图床(仓库已 public)
     print("📤 上传长图到 Gitee 国内图床...")
@@ -333,20 +336,18 @@ def push_image_to_dingtalk(webhook_url, img_path, report_type):
         print("❌ 图片上传失败,GITEE_TOKEN 未配置或 Gitee API 报错,无法发送钉钉消息")
         return
 
-    markdown_text = f"### 📊 今日A股全景核心板块{time_label}【主力】资金大长图已洗净！\n"
-    markdown_text += f"**快报日期**：{today_date}\n"
+    markdown_text = f"### 📊 A股核心板块主力资金全景图\n"
+    markdown_text += f"**数据时间**: {today_date} {now_time}  \n"
+    markdown_text += f"**报告类型**: 【{main_label}】{sub_label}  \n"
     markdown_text += "━━━━━━━━━━━━━━━━━━━━\n"
     markdown_text += f"![主力资金全景长图]({cdn_image_url})\n\n"
-    markdown_text += "📂 **自媒体运营发布动作**：\n"
-    markdown_text += f"1. 长按上方群聊里的{time_label}图表,直接保存至手机相册。\n"
-    markdown_text += "2. 打开公众号后台,直接插入最新动态文章,一秒群发抢占头条！\n"
     markdown_text += "━━━━━━━━━━━━━━━━━━━━\n"
     markdown_text += "> ⚠️ *免责声明:本内容仅供客观数据事实复盘,不构成任何投资买卖建议。*"
 
     payload = {
         "msgtype": "markdown",
         "markdown": {
-            "title": f"今日{time_label}主力资金长图已就绪",
+            "title": f"【{main_label}】A股主力资金图 {today_date} {now_time}",
             "text": markdown_text
         }
     }
@@ -355,26 +356,82 @@ def push_image_to_dingtalk(webhook_url, img_path, report_type):
     response = requests.post(webhook_url, data=json.dumps(payload), headers=headers).json()
 
     if response.get("errcode") == 0:
-        print(f"🎉【{time_label}特刊完美收官】简报已安全送达钉钉群聊!")
+        print(f"🎉【{main_label} {now_time}】简报已安全送达钉钉群聊!")
     else:
         print(f"❌ 钉钉拒绝,原因:{response}")
 
 
+def _get_report_type():
+    """
+    根据北京时间当前时刻判定属于哪个报告时段
+    一天 4 次:
+      09:35 ~ 11:30 → "morning"  开盘后1小时
+      11:30 ~ 13:30 → "midday"   午盘收盘
+      13:30 ~ 15:00 → "afternoon" 下午开盘1小时
+      15:00 ~ 09:35 → "closing"   下午收盘(含盘后)
+    """
+    now = datetime.now()
+    h, m = now.hour, now.minute
+    t = h * 60 + m  # 当天分钟数
+
+    if 0 <= t < 9 * 60 + 35:
+        return "closing"       # 盘后/凌晨 → 算作昨天收盘归档
+    elif 9 * 60 + 35 <= t < 11 * 60 + 30:
+        return "morning"
+    elif 11 * 60 + 30 <= t < 13 * 60 + 30:
+        return "midday"
+    elif 13 * 60 + 30 <= t < 15 * 60:
+        return "afternoon"
+    else:
+        return "closing"
+
+
+REPORT_LABEL = {
+    "morning":   ("开盘后1小时", "盘中实时扫描"),
+    "midday":    ("午盘收盘",   "中场异动扫描"),
+    "afternoon": ("下午开盘1小时", "尾盘资金追踪"),
+    "closing":   ("全天收盘",   "收盘战报复盘"),
+}
+
+# 幂等标记文件:同一天同一时段只发一次
+IDEMPOTENT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".sent_marker")
+
+
+def _check_and_mark_sent(report_type):
+    """
+    返回 True 表示这次可以发(没发过),False 表示已经发过了跳过
+    用本地文件做幂等标记,文件名 = 日期_时段
+    """
+    os.makedirs(IDEMPOTENT_DIR, exist_ok=True)
+    today = datetime.now().strftime("%Y-%m-%d")
+    marker = os.path.join(IDEMPOTENT_DIR, f"{today}_{report_type}.done")
+    if os.path.exists(marker):
+        print(f"⚠️ 幂等标记已存在: {marker}, 本次跳过(避免重复发送)")
+        return False
+    # 写入标记
+    with open(marker, "w") as f:
+        f.write(datetime.now().isoformat())
+    return True
+
 if __name__ == "__main__":
+    report_type = _get_report_type()
+    main_label, _ = REPORT_LABEL[report_type]
+    print(f"🕐 当前时段判定: {report_type} → 【{main_label}】")
+
+    # 幂等检查:同一天同一时段只发一次
+    if not _check_and_mark_sent(report_type):
+        print(f"⏭️ 已发过,本次跳过。如需强制重发,删除 .sent_marker/ 下对应标记文件即可。")
+        raise SystemExit(0)
+
     print("📅 [验证开始] 正在检测大盘是否处于开盘交易状态...")
     if check_is_market_closed():
         print("😴 检测到今天非交易日,自动化工作流优雅休眠退出。")
     else:
-        # 💡 智能化总线判断:当前是中午还是下午收盘
-        current_hour = datetime.now().hour
-        # 北京时间 11:30~13:30 之间运行则判定为午盘
-        current_report_type = "midday" if 11 <= current_hour < 14 else "closing"
-
-        print(f"🔄 第一步:启动数据清洗进程,当前判定时段为: {current_report_type}")
+        print(f"🔄 第一步:启动数据清洗进程...")
         stock_data = get_all_merged_capital_flow()
 
         print("🎨 第二步:调用零轴中置绘图引擎渲染高级长图...")
-        img_file = generate_infographic_image(stock_data, current_report_type)
+        img_file = generate_infographic_image(stock_data, report_type)
 
         print("🔑 第三步:上传长图 + 推送简报到钉钉群聊...")
-        push_image_to_dingtalk(DINGTALK_WEBHOOK_URL, img_file, current_report_type)
+        push_image_to_dingtalk(DINGTALK_WEBHOOK_URL, img_file, report_type)
