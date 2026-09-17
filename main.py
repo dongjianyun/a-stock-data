@@ -83,46 +83,47 @@ def check_is_market_closed():
 def get_all_merged_capital_flow():
     """
     用 AKShare 直连东方财富 data.eastmoney.com 爬取真实概念资金流
-    (不依赖被代理拦截的 push2.eastmoney.com)
+    只保留用户指定的 27 个板块,板块名做精确映射到东财概念名
     """
-    # 用户关注的板块(名称做同义词映射,匹配东财概念库)
-    SECTOR_ALIASES = {
-        "5G概念": ["5G", "F5G"],
-        "通信技术": ["通信", "光通信"],
-        "国产芯片": ["芯片", "半导体", "集成电路"],
-        "光通信模块": ["光通信", "光模块"],
-        "CPO概念": ["CPO", "光模块"],
-        "存储芯片": ["存储芯片", "存储"],
-        "液冷服务器": ["液冷服务器"],
-        "光伏概念": ["光伏", "光伏概念"],
-        "PCB": ["PCB"],
-        "商业航天": ["商业航天"],
-        "小金属概念": ["小金属"],
-        "稀土永磁": ["稀土永磁", "稀土"],
-        "特高压": ["特高压"],
-        "国防军工": ["军工", "国防军工"],
-        "工业母机": ["工业母机"],
-        "CRO": ["CRO"],
-        "无人机": ["无人机"],
-        "创新药": ["创新药"],
-        "微盘股": ["微盘"],
-        "白酒": ["白酒"],
-        "中特估": ["中特估"],
-        "券商概念": ["券商"],
-        "农业种植": ["农业种植"],
-        "核电核能": ["核电"],
-        "银行": ["银行"],
-        "半导体": ["半导体", "芯片"],
-        "新能源车": ["新能源车", "新能源汽车"],
+    # 用户指定板块 -> 东财概念名(精确映射)
+    # 匹配不到的写 None,会 fallback 到东财行业资金流接口再试
+    SECTOR_TO_EASTMONEY = {
+        "5G概念": "F5G概念",
+        "通信技术": "通信技术服务",
+        "国产芯片": "芯片概念",          # 东财概念
+        "光通信模块": None,              # 东财今天无此概念/行业,占位
+        "CPO概念": "共封装光学(CPO)",
+        "存储芯片": "存储芯片",
+        "液冷服务器": "液冷服务器",
+        "光伏概念": "光伏概念",
+        "PCB": "PCB概念",
+        "商业航天": "商业航天",
+        "小金属概念": "小金属概念",
+        "稀土永磁": "稀土永磁",          # 东财概念(偶尔有/无,fallback行业)
+        "特高压": "特高压",
+        "国防军工": "军工",
+        "工业母机": "工业母机",
+        "CRO": "CRO概念",
+        "无人机": "无人机",
+        "创新药": "创新药",              # 东财概念
+        "微盘股": None,                  # 东财无此概念,占位
+        "白酒": "白酒概念",              # 东财概念 + fallback 行业"白酒"
+        "中特估": "同花顺中特估100",
+        "券商概念": "参股券商",
+        "农业种植": "农业种植",
+        "核电核能": "核电",
+        "银行": "参股银行",
+        "半导体": "芯片概念",            # 和国产芯片同映射
+        "新能源车": "新能源汽车",
     }
 
-    def _match_sector(user_name, concept_list):
-        """在概念列表中模糊匹配用户板块"""
-        aliases = SECTOR_ALIASES.get(user_name, [user_name])
+    def _fuzzy_match(target, concept_list):
+        """如果精确映射找不到,在概念列表里模糊匹配"""
+        # 去掉"概念""概念股"后缀再匹配
+        clean = target.replace("概念", "").replace("概念股", "").replace("技术", "")
         for concept in concept_list:
-            for alias in aliases:
-                if alias in concept:
-                    return concept
+            if clean in concept or concept in clean:
+                return concept
         return None
 
     try:
@@ -142,50 +143,54 @@ def get_all_merged_capital_flow():
         df["净额"] = df["净额"].astype(str).str.replace("--", "0").str.replace(",", "").astype(float)
         df["行业-涨跌幅"] = df["行业-涨跌幅"].astype(str).str.replace("--", "0").astype(float)
         df["行业"] = df["行业"].astype(str)
-        print(f"✅ 拿到 {len(df)} 个概念,净额范围 {df['净额'].min():.2f} ~ {df['净额'].max():.2f} 亿")
+        print(f"✅ 东财共 {len(df)} 个概念,净额范围 {df['净额'].min():.2f} ~ {df['净额'].max():.2f} 亿")
 
-        # 概念名 -> 数据字典
         concept_map = dict(zip(df["行业"], df[["净额", "行业-涨跌幅"]].itertuples(index=False, name=None)))
+        concept_names = list(concept_map.keys())
 
         result = []
-
-        # 1) 用户关注板块(匹配真实数据,匹配不到也放占位 0)
         matched_count = 0
-        for user_name in SECTOR_ALIASES:
-            match = _match_sector(user_name, list(concept_map.keys()))
+
+        for user_name, eastmoney_name in SECTOR_TO_EASTMONEY.items():
+            # 1) 先用精确映射
+            match = None
+            if eastmoney_name and eastmoney_name in concept_map:
+                match = eastmoney_name
+            else:
+                # 2) 再模糊匹配
+                match = _fuzzy_match(user_name, concept_names)
+
             if match:
                 flow, pct = concept_map[match]
                 result.append({"name": user_name, "flow": flow, "pct": pct})
                 matched_count += 1
+                print(f"  ✅ {user_name} -> {match} ({flow:+.2f}亿)")
             else:
+                # 3) 匹配不到:去东财行业资金流里再试
+                industry_df = None
+                for a in range(3):
+                    try:
+                        industry_df = ak.stock_fund_flow_industry()
+                        break
+                    except:
+                        time.sleep(1)
+                if industry_df is not None:
+                    industry_df["净额"] = industry_df["净额"].astype(str).str.replace("--", "0").str.replace(",", "").astype(float)
+                    industry_df["行业-涨跌幅"] = industry_df["行业-涨跌幅"].astype(str).str.replace("--", "0").astype(float)
+                    industry_df["行业"] = industry_df["行业"].astype(str)
+                    # 在行业列表里模糊匹配
+                    industry_match = _fuzzy_match(user_name, industry_df["行业"].tolist())
+                    if industry_match:
+                        row = industry_df[industry_df["行业"] == industry_match].iloc[0]
+                        result.append({"name": user_name, "flow": row["净额"], "pct": row["行业-涨跌幅"]})
+                        matched_count += 1
+                        print(f"  ✅ {user_name} -> [行业] {industry_match} ({row['净额']:+.2f}亿)")
+                        continue
                 result.append({"name": user_name, "flow": 0.0, "pct": 0.0})
-        print(f"🎯 用户 {len(SECTOR_ALIASES)} 个板块匹配到 {matched_count} 个真实数据")
+                print(f"  ⚠️ {user_name} 匹配不到,占位 0")
 
-        # 2) 额外补充:净流入 Top 8 + 净流出 Top 8(去掉已在列表里的)
-        top_inflow = df.nlargest(8, "净额")[["行业", "净额", "行业-涨跌幅"]]
-        top_outflow = df.nsmallest(8, "净额")[["行业", "净额", "行业-涨跌幅"]]
-        existing = {r["name"] for r in result}
-
-        extra = []
-        for _, row in top_inflow.iterrows():
-            if row["行业"] not in existing and row["净额"] > 0:
-                extra.append({"name": row["行业"], "flow": row["净额"], "pct": row["行业-涨跌幅"]})
-                existing.add(row["行业"])
-        for _, row in top_outflow.iterrows():
-            if row["行业"] not in existing and row["净额"] < 0:
-                extra.append({"name": row["行业"], "flow": row["净额"], "pct": row["行业-涨跌幅"]})
-                existing.add(row["行业"])
-
-        result.extend(extra)
-        print(f"📊 额外补充 {len(extra)} 个热门概念")
-
-        # 3) 全部按净额从大到小排序
+        print(f"🎯 {len(SECTOR_TO_EASTMONEY)} 个板块匹配到 {matched_count} 个真实数据")
         result.sort(key=lambda x: x["flow"], reverse=True)
-
-        # 验证输出前10
-        for item in result[:10]:
-            print(f"   📈 {item['name']}: {item['flow']:+.2f}亿 ({item['pct']:+.2f}%)")
-
         return result
 
     except Exception as e:
