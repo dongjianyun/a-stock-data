@@ -46,9 +46,13 @@ _CHINESE_FONT_PATH = _ensure_chinese_font()
 # =====================================================================
 # 钉钉群机器人 Webhook
 DINGTALK_WEBHOOK_URL = "https://oapi.dingtalk.com/robot/send?access_token=a460953e539e18fa8b883fbe7cb3d16a3a4842b2cbe25997c75bc5db46257c88"
-# GitHub 仓库信息(用于长图 CDN 链接,需确保 infographic.png 已 push 到 main 分支)
-GITHUB_USERNAME = "dongjianyun"
-GITHUB_REPO = "a-stock-data"
+
+# Gitee 国内图床配置(全程国内网络,钉钉能拉图)
+# 请在 https://gitee.com 创建仓库 + 生成私人令牌(projects 权限)后填下面两项
+GITEE_USERNAME = "dongjianyun"
+GITEE_REPO = "a-stock-data"
+GITEE_TOKEN = ""  # TODO: 填入你的 Gitee 私人令牌
+GITEE_BRANCH = "master"  # Gitee 默认分支是 master,如果建仓库时选了 main 就改这里
 
 # =====================================================================
 # 📅 核心模块：中国法定节假日休市智能拦截引擎
@@ -202,28 +206,46 @@ def generate_infographic_image(data_list, report_type):
 # =====================================================================
 # 🔗 第三部分：组装时段特定的通知送达钉钉群机器人
 # =====================================================================
-def _upload_to_catbox(img_path, expire_hours=24):
-    """把图片上传到 catbox.moe(litterbox),返回公网可访问 URL"""
+def _upload_to_gitee(img_path):
+    """通过 Gitee REST API 上传图片,返回公网 raw 链接(国内 CDN,钉钉能拉图)"""
+    import base64
+    if not GITEE_TOKEN:
+        print("⚠️ GITEE_TOKEN 未配置,跳过 Gitee 上传")
+        return None
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Origin": "https://catbox.moe",
-            "Referer": "https://catbox.moe/",
-        }
+        filename = os.path.basename(img_path)
+        # 先查文件是否已存在(更新需要 sha)
+        sha = None
+        check_url = f"https://gitee.com/api/v5/repos/{GITEE_USERNAME}/{GITEE_REPO}/contents/{filename}"
+        check_params = {"access_token": GITEE_TOKEN, "ref": GITEE_BRANCH}
+        check_resp = requests.get(check_url, params=check_params, timeout=10)
+        if check_resp.status_code == 200:
+            sha = check_resp.json().get("sha")
+
+        # 读文件并 base64 编码
         with open(img_path, "rb") as f:
-            resp = requests.post(
-                "https://litterbox.catbox.moe/resources/internals/api.php",
-                data={"reqtype": "fileupload", "time": f"{expire_hours}h"},
-                files={"fileToUpload": (os.path.basename(img_path), f, "image/png")},
-                headers=headers,
-                timeout=30,
-            )
-        if resp.status_code == 200 and resp.text.startswith("http"):
-            print(f"📤 图片已上传 catbox: {resp.text}")
-            return resp.text
-        print(f"⚠️ catbox 上传被拒: status={resp.status_code}, body={resp.text[:100]}")
+            content_b64 = base64.b64encode(f.read()).decode()
+
+        # PUT 上传/更新
+        put_url = f"https://gitee.com/api/v5/repos/{GITEE_USERNAME}/{GITEE_REPO}/contents/{filename}"
+        put_data = {
+            "access_token": GITEE_TOKEN,
+            "message": f"auto update {filename}",
+            "content": content_b64,
+            "branch": GITEE_BRANCH,
+        }
+        if sha:
+            put_data["sha"] = sha  # 更新时必须带 sha
+
+        resp = requests.put(put_url, json=put_data, timeout=30)
+        result = resp.json()
+        if resp.status_code in (200, 201):
+            raw_url = f"https://gitee.com/{GITEE_USERNAME}/{GITEE_REPO}/raw/{GITEE_BRANCH}/{filename}"
+            print(f"📤 图片已上传 Gitee: {raw_url}")
+            return raw_url
+        print(f"⚠️ Gitee 上传失败: {resp.status_code} {result.get('message','')}")
     except Exception as e:
-        print(f"⚠️ catbox 上传失败: {e}")
+        print(f"⚠️ Gitee 上传异常: {e}")
     return None
 
 
@@ -231,14 +253,12 @@ def push_image_to_dingtalk(webhook_url, img_path, report_type):
     today_date = datetime.now().strftime("%Y-%m-%d")
     time_label = "【午盘】中场" if report_type == "midday" else "【收盘】全天"
 
-    # 优先上传 catbox,失败再回退 GitHub jsDelivr CDN
-    print("📤 上传长图到 catbox 临时图床...")
-    catbox_url = _upload_to_catbox(img_path)
-    if catbox_url:
-        cdn_image_url = catbox_url
-    else:
-        cdn_image_url = f"https://cdn.jsdelivr.net/gh/{GITHUB_USERNAME}/{GITHUB_REPO}@main/{img_path}?t={int(time.time())}"
-        print("⚠️ catbox 不可用,回退到 GitHub CDN(需要手动 push infographic.png)")
+    # 用 Gitee 国内图床
+    print("📤 上传长图到 Gitee 国内图床...")
+    cdn_image_url = _upload_to_gitee(img_path)
+    if not cdn_image_url:
+        print("❌ 图片上传失败,GITEE_TOKEN 未配置或 Gitee API 报错,无法发送钉钉消息")
+        return
 
     markdown_text = f"### 📊 今日A股全景核心板块{time_label}【主力】资金大长图已洗净！\n"
     markdown_text += f"**快报日期**：{today_date}\n"
