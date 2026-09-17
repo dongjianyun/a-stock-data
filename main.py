@@ -127,7 +127,17 @@ def get_all_merged_capital_flow():
 
     try:
         print("📡 AKShare 爬取东财概念资金流...")
-        df = ak.stock_fund_flow_concept()
+        df = None
+        for attempt in range(5):
+            try:
+                df = ak.stock_fund_flow_concept()
+                print(f"✅ 第 {attempt+1} 次成功!")
+                break
+            except Exception as e:
+                print(f"  第 {attempt+1} 次失败: {type(e).__name__}, 2s 后重试...")
+                time.sleep(2)
+        if df is None:
+            raise RuntimeError("AKShare 5 次全部失败")
         # 数据清洗:净额转 float(有些行是 "--" 或空)
         df["净额"] = df["净额"].astype(str).str.replace("--", "0").str.replace(",", "").astype(float)
         df["行业-涨跌幅"] = df["行业-涨跌幅"].astype(str).str.replace("--", "0").astype(float)
@@ -285,17 +295,22 @@ def _upload_to_gitee(img_path):
             # Gitee raw 会 302 重定向到带签名的 raw.giteeusercontent.com
             # 钉钉不 follow 302,所以我们自己 follow 拿到签名直链(200 + image/png)
             raw_url = f"https://gitee.com/{GITEE_USERNAME}/{GITEE_REPO}/raw/{GITEE_BRANCH}/{filename}"
+            # 加时间戳参数,强制钉钉/CDN 不缓存(每次都新 URL)
+            cache_buster = int(time.time())
+            raw_url_with_ts = raw_url + f"?t={cache_buster}"
             try:
                 follow = requests.get(raw_url, allow_redirects=True, timeout=15)
                 final_url = follow.url
                 if follow.status_code == 200 and 'image/' in follow.headers.get('content-type', ''):
-                    print(f"📤 图片已上传,签名直链: {final_url[:80]}...")
-                    return final_url  # 返回签名直链(钉钉能拉)
+                    # 签名 URL 后面追加 &t=时间戳,绕过钉钉和 Gitee CDN 缓存
+                    url_with_cache_bust = final_url + f"&t={cache_buster}"
+                    print(f"📤 图片已上传,签名直链(带时间戳绕缓存): {url_with_cache_bust[:100]}...")
+                    return url_with_cache_bust
             except Exception:
                 pass
             # 兜底:返回 raw_url(钉钉可能拉不到)
             print(f"📤 图片已上传 Gitee(签名获取失败): {raw_url}")
-            return raw_url
+            return raw_url_with_ts
         print(f"⚠️ Gitee 上传失败: {resp.status_code} {result.get('message','')}")
     except Exception as e:
         print(f"⚠️ Gitee 上传异常: {e}")
