@@ -1,7 +1,3 @@
-
-DINGTALK_WEBHOOK_URL = "https://oapi.dingtalk.com/robot/send?access_token=a460953e539e18fa8b883fbe7cb3d16a3a4842b2cbe25997c75bc5db46257c88"
-
-
 import os
 import requests
 import json
@@ -13,9 +9,11 @@ import numpy as np
 # =====================================================================
 # 🚨 【小白专区】请在这里准确填写你的个人配置
 # =====================================================================
-DINGTALK_WEBHOOK_URL = "https://oapi.dingtalk.com/robot/send?access_token=a460953e539e18fa8b883fbe7cb3d16a3a4842b2cbe25997c75bc5db46257c88"
-GITHUB_USERNAME = "dongjianyun"     # 例如: dongjianyun
-GITHUB_REPO = "a-stock-data" # 例如: a-stock-data
+# 微信公众号凭据(已替换原钉钉 Webhook)
+WECHAT_APPID = "wx51e6c36abfcc6e72"
+WECHAT_APPSECRET = "c7d90937fcd0e51e933f938d6d80212d"
+# 图文素材永久素材 CDN 前缀(用于草稿正文 <img src> 渲染)
+WECHAT_CDN_PREFIX = "https://api.weixin.qq.com/cgi-bin/material/get?access_token={token}&media_id={media_id}"
 
 # =====================================================================
 # 📅 核心模块：中国法定节假日休市智能拦截引擎
@@ -163,39 +161,80 @@ def generate_infographic_image(data_list, report_type):
     return image_name
 
 # =====================================================================
-# 🔗 第三部分：组装时段特定的通知送达钉钉
+# 🔗 第三部分：推送图文草稿到微信公众号草稿箱
 # =====================================================================
-def push_image_to_dingtalk(webhook_url, img_path, report_type):
+def _get_wechat_access_token(appid, appsecret):
+    """通过 client_credential 拿到 access_token"""
+    url = "https://api.weixin.qq.com/cgi-bin/token"
+    params = {
+        "grant_type": "client_credential",
+        "appid": appid,
+        "secret": appsecret,
+    }
+    res = requests.get(url, params=params, timeout=15).json()
+    if "access_token" not in res:
+        raise RuntimeError(f"获取 access_token 失败: {res}")
+    return res["access_token"], res.get("expires_in", 7200)
+
+
+def _upload_wechat_material(access_token, img_path, media_type="image"):
+    """上传永久素材,返回 media_id 和 url(图文消息里 <img src> 用)"""
+    url = f"https://api.weixin.qq.com/cgi-bin/material/add_material?access_token={access_token}&type={media_type}"
+    with open(img_path, "rb") as f:
+        files = {"media": (os.path.basename(img_path), f, "image/png")}
+        res = requests.post(url, files=files, timeout=60).json()
+    if "media_id" not in res:
+        raise RuntimeError(f"上传素材失败: {res}")
+    return res["media_id"], res.get("url", "")
+
+
+def _add_wechat_draft(access_token, title, content, thumb_media_id):
+    """写入草稿箱,返回草稿 media_id"""
+    url = f"https://api.weixin.qq.com/cgi-bin/draft/add?access_token={access_token}"
+    payload = {
+        "articles": [
+            {
+                "title": title,
+                "author": "A 股主力资金监测",
+                "content": content,
+                "thumb_media_id": thumb_media_id,
+                "need_open_comment": 0,
+                "only_fans_can_comment": 0,
+            }
+        ]
+    }
+    res = requests.post(url, json=payload, timeout=30).json()
+    if "media_id" not in res:
+        raise RuntimeError(f"草稿创建失败: {res}")
+    return res["media_id"]
+
+
+def push_image_to_wechat_draft(appid, appsecret, img_path, report_type):
+    """主入口:获取 token → 上传图片 → 写入草稿箱"""
     today_date = datetime.now().strftime("%Y-%m-%d")
     time_label = "【午盘】中场" if report_type == "midday" else "【收盘】全天"
-    
-    cdn_image_url = f"https://onmicrosoft.cn{GITHUB_USERNAME}/{GITHUB_REPO}@main/{img_path}?t={int(time.time())}"
-    
-    markdown_text = f"### 📊 今日A股全景核心板块{time_label}【主力】资金大长图已洗净！\n"
-    markdown_text += f"**快报日期**：{today_date}\n"
-    markdown_text += "━━━━━━━━━━━━━━━━━━━━\n"
-    markdown_text += f"![主力资金全景长图]({cdn_image_url})\n\n"
-    markdown_text += "📂 **自媒体运营发布动作**：\n"
-    markdown_text += f"1. 长按上方群聊里的{time_label}图表，直接保存至手机相册。\n"
-    markdown_text += "2. 打开公众号后台，直接插入最新动态文章，一秒群发抢占头条！\n"
-    markdown_text += "━━━━━━━━━━━━━━━━━━━━\n"
-    markdown_text += "> ⚠️ *免责声明：本内容仅供客观数据事实复盘，不构成任何投资买卖建议。*"
 
-    payload = {
-        "msgtype": "markdown",
-        "markdown": {
-            "title": f"今日{time_label}主力资金长图已就绪",  
-            "text": markdown_text
-        }
-    }
-    
-    headers = {"Content-Type": "application/json"}
-    response = requests.post(webhook_url, data=json.dumps(payload), headers=headers).json()
-    
-    if response.get("errcode") == 0:
-        print(f"🎉【{time_label}特刊完美收官】简报已安全送达钉钉群聊！")
-    else:
-        print(f"❌ 钉钉拒绝，原因：{response}")
+    print("🔐 第 3.1 步：获取 access_token...")
+    access_token, _ = _get_wechat_access_token(appid, appsecret)
+
+    print("📤 第 3.2 步：上传长图为永久素材(image)...")
+    media_id, material_url = _upload_wechat_material(access_token, img_path, "image")
+    # 正文 <img src> 优先用上传返回的 url;缺失则回退到 material/get 接口
+    img_src = material_url or WECHAT_CDN_PREFIX.format(token=access_token, media_id=media_id)
+
+    print("📝 第 3.3 步：写入微信公众号草稿箱...")
+    title = f"今日{time_label}主力资金长图已就绪 {today_date}"
+    content = (
+        f"<h2 style='text-align:center;'>📊 今日A股全景核心板块{time_label}【主力】资金大长图已洗净！</h2>"
+        f"<p style='text-align:center;'><strong>快报日期</strong>：{today_date}</p>"
+        f"<hr/>"
+        f"<p style='text-align:center;'><img src='{img_src}' alt='主力资金全景长图'/></p>"
+        f"<hr/>"
+        f"<p>⚠️ <em>免责声明：本内容仅供客观数据事实复盘，不构成任何投资买卖建议。</em></p>"
+    )
+    draft_id = _add_wechat_draft(access_token, title, content, thumb_media_id=media_id)
+    print(f"🎉【{time_label}特刊完美收官】草稿已写入公众号草稿箱! draft_id={draft_id}")
+
 
 if __name__ == "__main__":
     print("📅 [验证开始] 正在检测大盘是否处于开盘交易状态...")
@@ -206,12 +245,12 @@ if __name__ == "__main__":
         current_hour = datetime.now().hour
         # 北京时间 11:30~13:30 之间运行则判定为午盘
         current_report_type = "midday" if 11 <= current_hour < 14 else "closing"
-        
+
         print(f"🔄 第一步：启动数据清洗进程，当前判定时段为: {current_report_type}")
         stock_data = get_all_merged_capital_flow()
-        
+
         print("🎨 第二步：调用零轴中置绘图引擎渲染高级长图...")
         img_file = generate_infographic_image(stock_data, current_report_type)
-        
-        print("🔑 第三步：向钉钉发送图文长图简报...")
-        push_image_to_dingtalk(DINGTALK_WEBHOOK_URL, img_file, current_report_type)
+
+        print("🔑 第三步：推送图文草稿到微信公众号草稿箱...")
+        push_image_to_wechat_draft(WECHAT_APPID, WECHAT_APPSECRET, img_file, current_report_type)
