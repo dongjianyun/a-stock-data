@@ -6,9 +6,17 @@ import os
 import requests
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import numpy as np
+
+# 北京时间（UTC+8）辅助函数，确保在 UTC 环境下也能正确判断交易日与时段
+def beijing_now():
+    try:
+        from datetime import UTC
+        return datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=8)
+    except ImportError:
+        return datetime.utcnow() + timedelta(hours=8)
 
 # =====================================================================
 # 🚨 【小白专区】请在这里准确填写你的个人配置
@@ -24,8 +32,8 @@ def check_is_market_closed():
     """
     直连国内最稳定的提莫节假日API，智能识别今天大盘是否开盘
     """
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    url = f"https://timor.tech{today_str}"
+    today_str = beijing_now().strftime("%Y-%m-%d")
+    url = f"https://timor.tech/api/holiday/info/{today_str}"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
         res = requests.get(url, headers=headers, timeout=10).json()
@@ -46,56 +54,90 @@ def check_is_market_closed():
 def get_all_merged_capital_flow():
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Referer": "https://eastmoney.com"
+        "Referer": "https://data.eastmoney.com/"
     }
     specified_sectors = {
-        "5G概念": "BK0714", "通信技术": "BK0630", "国产芯片": "BK0891", 
-        "光通信模块": "BK0714", "CPO概念": "BK1128", "存储芯片": "BK1118", 
-        "液冷服务器": "BK1136", "光伏概念": "BK0491", "PCB": "BK0971", 
-        "商业航天": "BK1173", "小金属概念": "BK0736", "稀土永磁": "BK0591", 
-        "特高压": "BK0565", "国防军工": "BK0472", "工业母机": "BK1016", 
-        "CRO": "BK0897", "无人机": "BK0665", "创新药": "BK1106", 
-        "微盘股": "BK1158", "白酒": "BK0896", "中特估": "BK1137", 
-        "券商概念": "BK0711", "农业种植": "BK0916", "核电核能": "BK0548", 
+        "5G概念": "BK0714", "通信技术": "BK1650", "国产芯片": "BK0891",
+        "光通信模块": "BK1136", "CPO概念": "BK1128", "存储芯片": "BK1137",
+        "液冷服务器": "BK1138", "光伏概念": "BK0588", "PCB": "BK0877",
+        "商业航天": "BK0963", "小金属概念": "BK0695", "稀土永磁": "BK0578",
+        "特高压": "BK0918", "军工": "BK0490", "工业母机": "BK1004",
+        "CRO": "BK0899", "无人机": "BK0704", "创新药": "BK1106",
+        "微盘股": "BK1158", "白酒": "BK0896", "央国企改革": "BK0683",
+        "券商概念": "BK0711", "农业种植": "BK0888", "核能核电": "BK0577",
         "银行": "BK0475", "半导体": "BK1036", "新能源车": "BK0900"
     }
-    url = "https://eastmoney.com"
-    
+    today_str = beijing_now().strftime("%Y-%m-%d")
+    base = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+
+    def fetch(report_name, date_str):
+        flt = f"(TRADE_DATE%3E%3D%27{date_str}%27)"
+        params = f"sortColumns=NET_INFLOW&sortTypes=-1&pageSize=500&pageNumber=1&columns=BOARD_CODE,BOARD_NAME,CHANGE_RATE,NET_INFLOW&filter={flt}&reportName={report_name}"
+        url = f"{base}?{params}"
+        try:
+            res = requests.get(url, headers=headers, timeout=15).json()
+            result = res.get("result") or {}
+            return result.get("data") or []
+        except Exception as e:
+            print(f"⚠️ {report_name} 接口微卡: {e}")
+            return []
+
+    def fetch_latest(report_name):
+        # 优先取今日数据，若今日未开盘则回退到最近一个交易日
+        data = fetch(report_name, today_str)
+        if data:
+            return data
+        # 回退：取最近一个交易日的数据
+        latest_params = f"sortColumns=TRADE_DATE&sortTypes=-1&pageSize=1&pageNumber=1&columns=TRADE_DATE&reportName={report_name}"
+        try:
+            res = requests.get(f"{base}?{latest_params}", headers=headers, timeout=15).json()
+            latest_date = (res.get("result") or {}).get("data", [{}])[0].get("TRADE_DATE", "")[:10]
+            if latest_date and latest_date != today_str:
+                print(f"ℹ️ 今日暂无数据，使用最近交易日 {latest_date} 的数据")
+                return fetch(report_name, latest_date)
+        except Exception as e:
+            print(f"⚠️ 获取最近交易日失败: {e}")
+        return []
+
     try:
-        response = requests.get(url, headers=headers, timeout=12)
-        res = response.json()
-        raw_list = res.get("data", {}).get("diff", [])
-        market_dict = {item["f12"]: item for item in raw_list if "f12" in item}
-        
+        concept_list = fetch_latest("RPT_CONCEPT_FUNDFLOW")
+        industry_list = fetch_latest("RPT_INDUSTRY_FUNDFLOW")
+        raw_list = concept_list + industry_list
+
+        if not raw_list:
+            raise ValueError("接口返回空数据")
+
+        market_dict = {item["BOARD_CODE"]: item for item in raw_list if "BOARD_CODE" in item}
+
         top_10_market = []
-        for item in raw_list[:10]:
+        for item in sorted(raw_list, key=lambda x: x.get("NET_INFLOW", 0), reverse=True)[:10]:
             top_10_market.append({
-                "name": item.get("f14", "未知"),
-                "flow": item.get("f62", 0) / 100000000.0,
-                "pct": item.get("f3", 0.0)
+                "name": item.get("BOARD_NAME", "未知"),
+                "flow": item.get("NET_INFLOW", 0) / 100000000.0,
+                "pct": item.get("CHANGE_RATE", 0.0)
             })
-            
+
         specified_list = []
         for name, code in specified_sectors.items():
             if code in market_dict:
                 match_data = market_dict[code]
                 specified_list.append({
                     "name": name,
-                    "flow": match_data.get("f62", 0) / 100000000.0,
-                    "pct": match_data.get("f3", 0.0)
+                    "flow": match_data.get("NET_INFLOW", 0) / 100000000.0,
+                    "pct": match_data.get("CHANGE_RATE", 0.0)
                 })
             else:
                 specified_list.append({"name": name, "flow": 0.0, "pct": 0.0})
-                
+
         merged_dict = {}
         for item in top_10_market: merged_dict[item["name"]] = item
         for item in specified_list: merged_dict[item["name"]] = item
-            
+
         final_list = list(merged_dict.values())
         final_list.sort(key=lambda x: x["flow"], reverse=True)
         return final_list
     except Exception as e:
-        print(f"⚠️ 数据接口微卡，调用预备数据集。")
+        print(f"⚠️ 数据接口微卡，调用预备数据集。原因: {e}")
         all_names = list(specified_sectors.keys())
         return [{"name": name, "flow": 12.0 - idx * 0.9, "pct": 2.5 - idx * 0.1} for idx, name in enumerate(all_names)]
 
@@ -106,7 +148,7 @@ def generate_infographic_image(data_list, report_type):
     """
     根据运行时间段自动变换图表大标题
     """
-    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'sans-serif', 'Arial Unicode MS']
+    plt.rcParams['font.sans-serif'] = ['WenQuanYi Micro Hei', 'WenQuanYi Zen Hei', 'DejaVu Sans', 'sans-serif']
     plt.rcParams['axes.unicode_minus'] = False     
 
     data_list = data_list[::-1]
@@ -142,7 +184,7 @@ def generate_infographic_image(data_list, report_type):
             ax.text(width, bar.get_y() + bar.get_height()/2, label_text,
                     va='center', ha='right', fontsize=9, color='#1a202c', fontweight='bold')
 
-    today_date = datetime.now().strftime("%Y-%m-%d")
+    today_date = beijing_now().strftime("%Y-%m-%d")
     
     # 💡 核心修改：根据运行时间自动切换午盘/收盘小标题
     title_suffix = "【午盘特刊】中场异动扫描" if report_type == "midday" else "【收盘特刊】全天战报复盘"
@@ -166,7 +208,7 @@ def generate_infographic_image(data_list, report_type):
 # 🔗 第三部分：组装时段特定的通知送达钉钉
 # =====================================================================
 def push_image_to_dingtalk(webhook_url, img_path, report_type):
-    today_date = datetime.now().strftime("%Y-%m-%d")
+    today_date = beijing_now().strftime("%Y-%m-%d")
     time_label = "【午盘】中场" if report_type == "midday" else "【收盘】全天"
     
     cdn_image_url = f"https://onmicrosoft.cn{GITHUB_USERNAME}/{GITHUB_REPO}@main/{img_path}?t={int(time.time())}"
@@ -203,7 +245,7 @@ if __name__ == "__main__":
         print("😴 检测到今天非交易日，自动化工作流优雅休眠退出。")
     else:
         # 💡 智能化总线判断：当前是中午还是下午收盘
-        current_hour = datetime.now().hour
+        current_hour = beijing_now().hour
         # 北京时间 11:30~13:30 之间运行则判定为午盘
         current_report_type = "midday" if 11 <= current_hour < 14 else "closing"
         
