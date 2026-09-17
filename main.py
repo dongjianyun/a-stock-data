@@ -9,6 +9,12 @@ import matplotlib.font_manager as fm
 import numpy as np
 import akshare as ak
 
+def _bj_now():
+    """返回北京时间 now (UTC+8)"""
+    from datetime import timezone, timedelta
+    return datetime.now(timezone(timedelta(hours=8)))
+
+
 # =====================================================================
 # 🔤 运行时自动确保中文字体可用(TraeWork 定时任务用全新容器,字体每次都要装)
 # =====================================================================
@@ -61,7 +67,7 @@ def check_is_market_closed():
     """
     直连国内最稳定的提莫节假日API，智能识别今天大盘是否开盘
     """
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = _bj_now().strftime("%Y-%m-%d")
     url = f"https://timor.tech{today_str}"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
@@ -240,13 +246,10 @@ def generate_infographic_image(data_list, report_type):
         ax.text(width, bar.get_y() + bar.get_height()/2, label_text,
                 va='center', ha='left', fontsize=9, color='#2d3748', fontweight='bold')
 
-    today_date = datetime.now().strftime("%Y-%m-%d")
-    now_time = datetime.now().strftime("%H:%M")
+    today_date = _bj_now().strftime("%Y-%m-%d")
+    now_time = _bj_now().strftime("%H:%M")
     
-    # 根据 report_type 变换小标题
-    main_label, sub_label = REPORT_LABEL.get(report_type, ("收盘", "收盘战报复盘"))
-    
-    plt.title(f"A股核心板块主力资金监测全景图\n数据时间: {today_date} {now_time}  【{main_label}】{sub_label}", 
+    plt.title(f"A股核心板块主力资金监测全景图\n数据时间: {today_date} {now_time}", 
               fontsize=14, pad=22, color='#1a202c', fontweight='bold', loc='center')
     
     plt.xlabel("主力资金流动分布 (单位: 亿元)   [红色流入 🔺 绿色流出 🔻]\n\n⚠️ 免责声明：本内容仅作为客观市场现象的数据归纳，绝非投资建议，据此操作风险自担。", 
@@ -324,7 +327,7 @@ def _upload_to_gitee(img_path):
 
 
 def push_image_to_dingtalk(webhook_url, img_path, report_type):
-    now = datetime.now()
+    now = _bj_now()
     today_date = now.strftime("%Y-%m-%d")
     now_time = now.strftime("%H:%M")
     main_label, sub_label = REPORT_LABEL.get(report_type, ("收盘", ""))
@@ -338,7 +341,6 @@ def push_image_to_dingtalk(webhook_url, img_path, report_type):
 
     markdown_text = f"### 📊 A股核心板块主力资金全景图\n"
     markdown_text += f"**数据时间**: {today_date} {now_time}  \n"
-    markdown_text += f"**报告类型**: 【{main_label}】{sub_label}  \n"
     markdown_text += "━━━━━━━━━━━━━━━━━━━━\n"
     markdown_text += f"![主力资金全景长图]({cdn_image_url})\n\n"
     markdown_text += "━━━━━━━━━━━━━━━━━━━━\n"
@@ -347,7 +349,7 @@ def push_image_to_dingtalk(webhook_url, img_path, report_type):
     payload = {
         "msgtype": "markdown",
         "markdown": {
-            "title": f"【{main_label}】A股主力资金图 {today_date} {now_time}",
+            "title": f"A股主力资金图 {today_date} {now_time}",
             "text": markdown_text
         }
     }
@@ -356,7 +358,7 @@ def push_image_to_dingtalk(webhook_url, img_path, report_type):
     response = requests.post(webhook_url, data=json.dumps(payload), headers=headers).json()
 
     if response.get("errcode") == 0:
-        print(f"🎉【{main_label} {now_time}】简报已安全送达钉钉群聊!")
+        print(f"🎉 [{now_time}] 简报已送达钉钉!")
     else:
         print(f"❌ 钉钉拒绝,原因:{response}")
 
@@ -370,7 +372,7 @@ def _get_report_type():
       13:30 ~ 15:00 → "afternoon" 下午开盘1小时
       15:00 ~ 09:35 → "closing"   下午收盘(含盘后)
     """
-    now = datetime.now()
+    now = _bj_now()
     h, m = now.hour, now.minute
     t = h * 60 + m  # 当天分钟数
 
@@ -403,7 +405,7 @@ def _check_and_mark_sent(report_type):
     用本地文件做幂等标记,文件名 = 日期_时段
     """
     os.makedirs(IDEMPOTENT_DIR, exist_ok=True)
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = _bj_now().strftime("%Y-%m-%d")
     marker = os.path.join(IDEMPOTENT_DIR, f"{today}_{report_type}.done")
     if os.path.exists(marker):
         print(f"⚠️ 幂等标记已存在: {marker}, 本次跳过(避免重复发送)")
