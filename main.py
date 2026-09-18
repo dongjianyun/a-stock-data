@@ -221,7 +221,7 @@ def push_image_to_dingtalk(webhook_url, img_path, report_type):
     today_date = now_beijing().strftime("%Y-%m-%d")
     time_label = "【午盘】中场" if report_type == "midday" else "【收盘】全天"
 
-    # 使用 Gitee raw 直链加载图片（与 GitHub 无任何关联）
+    # 使用 Gitee raw 直链加载图片
     cdn_image_url = f"https://gitee.com/{GITEE_OWNER}/{GITEE_REPO}/raw/main/{img_path}?t={int(time.time())}"
 
     markdown_text = f"### 📊 今日A股全景核心板块{time_label}【主力】资金大长图已洗净！\n"
