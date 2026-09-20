@@ -6,9 +6,14 @@ import os
 import requests
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import matplotlib.pyplot as plt
 import numpy as np
+
+try:
+    import akshare as ak
+except ImportError:
+    ak = None
 
 # =====================================================================
 # 🚨 【小白专区】请在这里准确填写你的个人配置
@@ -24,8 +29,9 @@ def check_is_market_closed():
     """
     直连国内最稳定的提莫节假日API，智能识别今天大盘是否开盘
     """
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    url = f"https://timor.tech{today_str}"
+    beijing_tz = timezone(timedelta(hours=8))
+    today_str = datetime.now(beijing_tz).strftime("%Y-%m-%d")
+    url = f"https://timor.tech/api/holiday/info/{today_str}"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
         res = requests.get(url, headers=headers, timeout=10).json()
@@ -44,58 +50,97 @@ def check_is_market_closed():
 # 🛠️ 第一部分：a-stock-data 全景板块绑定与数据清洗逻辑
 # =====================================================================
 def get_all_merged_capital_flow():
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Referer": "https://eastmoney.com"
-    }
+    """
+    通过 akshare 拉取东方财富概念/行业板块主力资金净流入数据，
+    匹配指定板块并合并全市场资金净流入前十板块。
+    """
+    # 指定板块：展示名 -> (akshare中的板块名, 数据源 concept/industry)
     specified_sectors = {
-        "5G概念": "BK0714", "通信技术": "BK0630", "国产芯片": "BK0891", 
-        "光通信模块": "BK0714", "CPO概念": "BK1128", "存储芯片": "BK1118", 
-        "液冷服务器": "BK1136", "光伏概念": "BK0491", "PCB": "BK0971", 
-        "商业航天": "BK1173", "小金属概念": "BK0736", "稀土永磁": "BK0591", 
-        "特高压": "BK0565", "国防军工": "BK0472", "工业母机": "BK1016", 
-        "CRO": "BK0897", "无人机": "BK0665", "创新药": "BK1106", 
-        "微盘股": "BK1158", "白酒": "BK0896", "中特估": "BK1137", 
-        "券商概念": "BK0711", "农业种植": "BK0916", "核电核能": "BK0548", 
-        "银行": "BK0475", "半导体": "BK1036", "新能源车": "BK0900"
+        "5G概念": ("5G", "concept"),
+        "通信技术": ("通信设备", "industry"),
+        "国产芯片": ("芯片概念", "concept"),
+        "光通信模块": ("光纤概念", "concept"),
+        "CPO概念": ("共封装光学(CPO)", "concept"),
+        "存储芯片": ("存储芯片", "concept"),
+        "液冷服务器": ("液冷服务器", "concept"),
+        "光伏概念": ("光伏概念", "concept"),
+        "PCB": ("PCB概念", "concept"),
+        "商业航天": ("商业航天", "concept"),
+        "小金属概念": ("小金属概念", "concept"),
+        "稀土永磁": ("稀土永磁", "concept"),
+        "特高压": ("特高压", "concept"),
+        "国防军工": ("军工", "concept"),
+        "工业母机": ("工业母机", "concept"),
+        "CRO": ("CRO概念", "concept"),
+        "无人机": ("无人机", "concept"),
+        "创新药": ("创新药", "concept"),
+        "微盘股": ("微盘股", "concept"),
+        "白酒": ("白酒", "industry"),
+        "中特估": ("同花顺中特估100", "concept"),
+        "券商概念": ("证券", "industry"),
+        "农业种植": ("农业种植", "concept"),
+        "核电核能": ("核电", "concept"),
+        "银行": ("银行", "industry"),
+        "半导体": ("半导体", "industry"),
+        "新能源车": ("新能源汽车", "concept"),
     }
-    url = "https://eastmoney.com"
-    
+
     try:
-        response = requests.get(url, headers=headers, timeout=12)
-        res = response.json()
-        raw_list = res.get("data", {}).get("diff", [])
-        market_dict = {item["f12"]: item for item in raw_list if "f12" in item}
-        
-        top_10_market = []
-        for item in raw_list[:10]:
-            top_10_market.append({
-                "name": item.get("f14", "未知"),
-                "flow": item.get("f62", 0) / 100000000.0,
-                "pct": item.get("f3", 0.0)
-            })
-            
+        if ak is None:
+            raise RuntimeError("akshare 未安装")
+
+        # 拉取概念板块与行业板块资金流
+        concept_df = ak.stock_fund_flow_concept()
+        industry_df = ak.stock_fund_flow_industry()
+
+        # 建立 名称 -> {净额(亿元), 涨跌幅} 的查找表
+        def build_lookup(df):
+            lookup = {}
+            for _, row in df.iterrows():
+                name = str(row.get("行业", "")).strip()
+                net = float(row.get("净额", 0) or 0)
+                pct = float(row.get("行业-涨跌幅", 0) or 0)
+                lookup[name] = {"flow": net, "pct": pct}
+            return lookup
+
+        concept_map = build_lookup(concept_df)
+        industry_map = build_lookup(industry_df)
+
+        # 全市场主力净流入前十（概念+行业合并排序）
+        all_items = []
+        for name, info in concept_map.items():
+            all_items.append({"name": name, "flow": info["flow"], "pct": info["pct"]})
+        for name, info in industry_map.items():
+            all_items.append({"name": name, "flow": info["flow"], "pct": info["pct"]})
+        all_items.sort(key=lambda x: x["flow"], reverse=True)
+        top_10_market = all_items[:10]
+
+        # 匹配指定板块
         specified_list = []
-        for name, code in specified_sectors.items():
-            if code in market_dict:
-                match_data = market_dict[code]
+        for display_name, (ak_name, source) in specified_sectors.items():
+            src_map = concept_map if source == "concept" else industry_map
+            if ak_name in src_map:
+                info = src_map[ak_name]
                 specified_list.append({
-                    "name": name,
-                    "flow": match_data.get("f62", 0) / 100000000.0,
-                    "pct": match_data.get("f3", 0.0)
+                    "name": display_name,
+                    "flow": info["flow"],
+                    "pct": info["pct"],
                 })
             else:
-                specified_list.append({"name": name, "flow": 0.0, "pct": 0.0})
-                
+                specified_list.append({"name": display_name, "flow": 0.0, "pct": 0.0})
+
+        # 合并去重（按展示名），指定板块优先
         merged_dict = {}
-        for item in top_10_market: merged_dict[item["name"]] = item
-        for item in specified_list: merged_dict[item["name"]] = item
-            
+        for item in top_10_market:
+            merged_dict[item["name"]] = item
+        for item in specified_list:
+            merged_dict[item["name"]] = item
+
         final_list = list(merged_dict.values())
         final_list.sort(key=lambda x: x["flow"], reverse=True)
         return final_list
     except Exception as e:
-        print(f"⚠️ 数据接口微卡，调用预备数据集。")
+        print(f"⚠️ 数据接口微卡，调用预备数据集。原因: {e}")
         all_names = list(specified_sectors.keys())
         return [{"name": name, "flow": 12.0 - idx * 0.9, "pct": 2.5 - idx * 0.1} for idx, name in enumerate(all_names)]
 
@@ -106,7 +151,7 @@ def generate_infographic_image(data_list, report_type):
     """
     根据运行时间段自动变换图表大标题
     """
-    plt.rcParams['font.sans-serif'] = ['Noto Sans CJK SC', 'DejaVu Sans', 'sans-serif', 'Arial Unicode MS']
+    plt.rcParams['font.sans-serif'] = ['Noto Sans CJK SC', 'Noto Color Emoji', 'DejaVu Sans', 'sans-serif', 'Arial Unicode MS']
     plt.rcParams['axes.unicode_minus'] = False     
 
     data_list = data_list[::-1]
@@ -142,7 +187,7 @@ def generate_infographic_image(data_list, report_type):
             ax.text(width, bar.get_y() + bar.get_height()/2, label_text,
                     va='center', ha='right', fontsize=9, color='#1a202c', fontweight='bold')
 
-    today_date = datetime.now().strftime("%Y-%m-%d")
+    today_date = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
     
     # 💡 核心修改：根据运行时间自动切换午盘/收盘小标题
     title_suffix = "【午盘特刊】中场异动扫描" if report_type == "midday" else "【收盘特刊】全天战报复盘"
@@ -150,7 +195,7 @@ def generate_infographic_image(data_list, report_type):
     plt.title(f"A股核心板块主力资金监测全景图\n数据快报: {today_date} {title_suffix}", 
               fontsize=14, pad=22, color='#1a202c', fontweight='bold', loc='center')
     
-    plt.xlabel("主力资金流动分布 (单位: 亿元)   [红色流入 🔺 绿色流出 🔻]\n\n⚠️ 免责声明：本内容仅作为客观市场现象的数据归纳，绝非投资建议，据此操作风险自担。", 
+    plt.xlabel("主力资金流动分布 (单位: 亿元)   [红色流入 ▲ 绿色流出 ▼]\n\n⚠️ 免责声明：本内容仅作为客观市场现象的数据归纳，绝非投资建议，据此操作风险自担。", 
                fontsize=8, color='#a0aec0', labelpad=15)
     
     plt.tick_params(axis='y', which='major', labelsize=10, labelcolor='#4a5568', length=0)
@@ -166,7 +211,7 @@ def generate_infographic_image(data_list, report_type):
 # 🔗 第三部分：组装时段特定的通知送达钉钉
 # =====================================================================
 def push_image_to_dingtalk(webhook_url, img_path, report_type):
-    today_date = datetime.now().strftime("%Y-%m-%d")
+    today_date = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
     time_label = "【午盘】中场" if report_type == "midday" else "【收盘】全天"
     
     cdn_image_url = f"https://onmicrosoft.cn{GITHUB_USERNAME}/{GITHUB_REPO}@main/{img_path}?t={int(time.time())}"
@@ -202,8 +247,9 @@ if __name__ == "__main__":
     if check_is_market_closed():
         print("😴 检测到今天非交易日，自动化工作流优雅休眠退出。")
     else:
-        # 💡 智能化总线判断：当前是中午还是下午收盘
-        current_hour = datetime.now().hour
+        # 💡 智能化总线判断：使用北京时间(UTC+8)判断午盘/收盘
+        beijing_tz = timezone(timedelta(hours=8))
+        current_hour = datetime.now(beijing_tz).hour
         # 北京时间 11:30~13:30 之间运行则判定为午盘
         current_report_type = "midday" if 11 <= current_hour < 14 else "closing"
         
