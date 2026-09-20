@@ -7,8 +7,25 @@ import requests
 import json
 import time
 from datetime import datetime
+import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import numpy as np
+
+# ── 中文字体注册：容器环境无预装 CJK 字体，手动注册 Noto Sans CJK SC ──
+_CJK_FONT_DIR = "/usr/share/fonts/cjk"
+for _fname in ("NotoSansSC-Regular.otf", "NotoSansSC-Bold.otf"):
+    _fpath = os.path.join(_CJK_FONT_DIR, _fname)
+    if os.path.exists(_fpath):
+        fm.fontManager.addfont(_fpath)
+if os.path.exists(os.path.join(_CJK_FONT_DIR, "NotoSansSC-Regular.otf")):
+    matplotlib.rcParams['font.sans-serif'] = ['Noto Sans CJK SC', 'DejaVu Sans', 'sans-serif']
+else:
+    matplotlib.rcParams['font.sans-serif'] = ['DejaVu Sans', 'sans-serif']
+matplotlib.rcParams['axes.unicode_minus'] = False
+
+# akshare 用于获取真实板块资金流数据（替代失效的东财直连接口）
+import akshare as ak
 
 # =====================================================================
 # 🚨 【小白专区】请在这里准确填写你的个人配置
@@ -23,9 +40,15 @@ GITHUB_REPO = "a-stock-data" # 例如: a-stock-data
 def check_is_market_closed():
     """
     直连国内最稳定的提莫节假日API，智能识别今天大盘是否开盘
+    同时结合周末判断（API 被 Cloudflare 拦截时仍能正确识别周末休市）
     """
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    url = f"https://timor.tech{today_str}"
+    today = datetime.now()
+    today_str = today.strftime("%Y-%m-%d")
+    # 周末（周六=5, 周日=6）直接判定休市
+    if today.weekday() >= 5:
+        print(f"🎉 动态监测：今天是周末（{today.strftime('%A')}），A股休市，不打扰主理人！😴")
+        return True
+    url = f"https://timor.tech/api/holiday/info/{today_str}"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
         res = requests.get(url, headers=headers, timeout=10).json()
@@ -44,60 +67,75 @@ def check_is_market_closed():
 # 🛠️ 第一部分：a-stock-data 全景板块绑定与数据清洗逻辑
 # =====================================================================
 def get_all_merged_capital_flow():
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Referer": "https://eastmoney.com"
-    }
+    """
+    通过 akshare 获取东财概念板块 + 行业板块的主力资金净流入数据。
+    容器内直连 push2.eastmoney.com 被代理空响应拦截，改用 akshare
+    （其底层走 datacenter-web 等可通路径）拉取真实数据。
+    """
     specified_sectors = {
-        "5G概念": "BK0714", "通信技术": "BK0630", "国产芯片": "BK0891", 
-        "光通信模块": "BK0714", "CPO概念": "BK1128", "存储芯片": "BK1118", 
-        "液冷服务器": "BK1136", "光伏概念": "BK0491", "PCB": "BK0971", 
-        "商业航天": "BK1173", "小金属概念": "BK0736", "稀土永磁": "BK0591", 
-        "特高压": "BK0565", "国防军工": "BK0472", "工业母机": "BK1016", 
-        "CRO": "BK0897", "无人机": "BK0665", "创新药": "BK1106", 
-        "微盘股": "BK1158", "白酒": "BK0896", "中特估": "BK1137", 
-        "券商概念": "BK0711", "农业种植": "BK0916", "核电核能": "BK0548", 
-        "银行": "BK0475", "半导体": "BK1036", "新能源车": "BK0900"
+        "5G概念", "通信技术", "国产芯片", "光通信模块", "CPO概念", "存储芯片",
+        "液冷服务器", "光伏概念", "PCB", "商业航天", "小金属概念", "稀土永磁",
+        "特高压", "国防军工", "工业母机", "CRO", "无人机", "创新药",
+        "微盘股", "白酒", "中特估", "券商概念", "农业种植", "核电核能",
+        "银行", "半导体", "新能源车"
     }
-    url = "https://eastmoney.com"
-    
+
+    all_boards = {}  # name -> {"name", "flow"(亿), "pct"(%)}
+
+    def _ingest(df):
+        if df is None or df.empty:
+            return
+        for _, row in df.iterrows():
+            name = str(row.get("行业", "")).strip()
+            if not name:
+                continue
+            try:
+                flow = float(row.get("净额", 0))
+            except (TypeError, ValueError):
+                flow = 0.0
+            try:
+                pct = float(row.get("行业-涨跌幅", 0))
+            except (TypeError, ValueError):
+                pct = 0.0
+            all_boards[name] = {"name": name, "flow": flow, "pct": pct}
+
     try:
-        response = requests.get(url, headers=headers, timeout=12)
-        res = response.json()
-        raw_list = res.get("data", {}).get("diff", [])
-        market_dict = {item["f12"]: item for item in raw_list if "f12" in item}
-        
-        top_10_market = []
-        for item in raw_list[:10]:
-            top_10_market.append({
-                "name": item.get("f14", "未知"),
-                "flow": item.get("f62", 0) / 100000000.0,
-                "pct": item.get("f3", 0.0)
-            })
-            
-        specified_list = []
-        for name, code in specified_sectors.items():
-            if code in market_dict:
-                match_data = market_dict[code]
-                specified_list.append({
-                    "name": name,
-                    "flow": match_data.get("f62", 0) / 100000000.0,
-                    "pct": match_data.get("f3", 0.0)
-                })
-            else:
-                specified_list.append({"name": name, "flow": 0.0, "pct": 0.0})
-                
-        merged_dict = {}
-        for item in top_10_market: merged_dict[item["name"]] = item
-        for item in specified_list: merged_dict[item["name"]] = item
-            
-        final_list = list(merged_dict.values())
-        final_list.sort(key=lambda x: x["flow"], reverse=True)
-        return final_list
+        _ingest(ak.stock_fund_flow_concept(symbol="即时"))
     except Exception as e:
-        print(f"⚠️ 数据接口微卡，调用预备数据集。")
-        all_names = list(specified_sectors.keys())
-        return [{"name": name, "flow": 12.0 - idx * 0.9, "pct": 2.5 - idx * 0.1} for idx, name in enumerate(all_names)]
+        print(f"⚠️ 概念板块资金流接口异常: {e}")
+    try:
+        _ingest(ak.stock_fund_flow_industry(symbol="即时"))
+    except Exception as e:
+        print(f"⚠️ 行业板块资金流接口异常: {e}")
+
+    if not all_boards:
+        print("⚠️ 数据接口全部异常，调用预备数据集。")
+        all_names = list(specified_sectors)
+        return [{"name": name, "flow": 12.0 - idx * 0.9, "pct": 2.5 - idx * 0.1}
+                for idx, name in enumerate(all_names)]
+
+    # 全市场资金流入 TOP10
+    sorted_boards = sorted(all_boards.values(), key=lambda x: x["flow"], reverse=True)
+    top_10_market = sorted_boards[:10]
+
+    # 指定关注板块（按名称匹配，未匹配到则填 0）
+    specified_list = []
+    for name in specified_sectors:
+        if name in all_boards:
+            specified_list.append(all_boards[name])
+        else:
+            specified_list.append({"name": name, "flow": 0.0, "pct": 0.0})
+
+    # 合并去重（按名称）并按净流入降序
+    merged_dict = {}
+    for item in top_10_market:
+        merged_dict[item["name"]] = item
+    for item in specified_list:
+        merged_dict[item["name"]] = item
+
+    final_list = list(merged_dict.values())
+    final_list.sort(key=lambda x: x["flow"], reverse=True)
+    return final_list
 
 # =====================================================================
 # 🎨 第二部分：智能双时段【零轴双向延伸】高清长图引擎
@@ -150,7 +188,7 @@ def generate_infographic_image(data_list, report_type):
     plt.title(f"A股核心板块主力资金监测全景图\n数据快报: {today_date} {title_suffix}", 
               fontsize=14, pad=22, color='#1a202c', fontweight='bold', loc='center')
     
-    plt.xlabel("主力资金流动分布 (单位: 亿元)   [红色流入 🔺 绿色流出 🔻]\n\n⚠️ 免责声明：本内容仅作为客观市场现象的数据归纳，绝非投资建议，据此操作风险自担。", 
+    plt.xlabel("主力资金流动分布 (单位: 亿元)   [红色流入 ▲ 绿色流出 ▼]\n\n⚠️ 免责声明：本内容仅作为客观市场现象的数据归纳，绝非投资建议，据此操作风险自担。", 
                fontsize=8, color='#a0aec0', labelpad=15)
     
     plt.tick_params(axis='y', which='major', labelsize=10, labelcolor='#4a5568', length=0)
