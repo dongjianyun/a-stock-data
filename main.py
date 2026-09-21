@@ -3,12 +3,16 @@ DINGTALK_WEBHOOK_URL = "https://oapi.dingtalk.com/robot/send?access_token=a46095
 
 
 import os
+import subprocess
 import requests
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import matplotlib.pyplot as plt
 import numpy as np
+
+# 北京时间 (UTC+8)
+BJ_TZ = timezone(timedelta(hours=8))
 
 # =====================================================================
 # 🚨 【小白专区】请在这里准确填写你的个人配置
@@ -24,8 +28,8 @@ def check_is_market_closed():
     """
     直连国内最稳定的提莫节假日API，智能识别今天大盘是否开盘
     """
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    url = f"https://timor.tech{today_str}"
+    today_str = datetime.now(BJ_TZ).strftime("%Y-%m-%d")
+    url = f"https://timor.tech/api/holiday/info/{today_str}"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
         res = requests.get(url, headers=headers, timeout=10).json()
@@ -59,7 +63,7 @@ def get_all_merged_capital_flow():
         "券商概念": "BK0711", "农业种植": "BK0916", "核电核能": "BK0548", 
         "银行": "BK0475", "半导体": "BK1036", "新能源车": "BK0900"
     }
-    url = "https://eastmoney.com"
+    url = "https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=500&po=1&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f12,f14,f3,f62"
     
     try:
         response = requests.get(url, headers=headers, timeout=12)
@@ -142,7 +146,7 @@ def generate_infographic_image(data_list, report_type):
             ax.text(width, bar.get_y() + bar.get_height()/2, label_text,
                     va='center', ha='right', fontsize=9, color='#1a202c', fontweight='bold')
 
-    today_date = datetime.now().strftime("%Y-%m-%d")
+    today_date = datetime.now(BJ_TZ).strftime("%Y-%m-%d")
     
     # 💡 核心修改：根据运行时间自动切换午盘/收盘小标题
     title_suffix = "【午盘特刊】中场异动扫描" if report_type == "midday" else "【收盘特刊】全天战报复盘"
@@ -166,7 +170,7 @@ def generate_infographic_image(data_list, report_type):
 # 🔗 第三部分：组装时段特定的通知送达钉钉
 # =====================================================================
 def push_image_to_dingtalk(webhook_url, img_path, report_type):
-    today_date = datetime.now().strftime("%Y-%m-%d")
+    today_date = datetime.now(BJ_TZ).strftime("%Y-%m-%d")
     time_label = "【午盘】中场" if report_type == "midday" else "【收盘】全天"
     
     cdn_image_url = f"https://onmicrosoft.cn{GITHUB_USERNAME}/{GITHUB_REPO}@main/{img_path}?t={int(time.time())}"
@@ -197,14 +201,50 @@ def push_image_to_dingtalk(webhook_url, img_path, report_type):
     else:
         print(f"❌ 钉钉拒绝，原因：{response}")
 
+# =====================================================================
+# 📤 第四部分：将生成的长图推送到 GitHub，使钉钉 CDN 图片链接生效
+# =====================================================================
+def push_image_to_github(img_path):
+    """
+    尝试 git add/commit/push 图片到 GitHub。
+    若失败（如无 token），打印错误但不中断流程。
+    """
+    try:
+        # 检查是否有变更
+        status = subprocess.run(["git", "status", "--porcelain", img_path],
+                                capture_output=True, text=True, cwd="/workspace")
+        if not status.stdout.strip():
+            print(f"📤 Git：{img_path} 无变更，跳过 push。")
+            return True
+
+        subprocess.run(["git", "add", img_path], check=True, cwd="/workspace")
+        commit_msg = f"chore: update {img_path} ({datetime.now(BJ_TZ).strftime('%Y-%m-%d %H:%M')})"
+        subprocess.run(["git", "commit", "-m", commit_msg], check=True, cwd="/workspace",
+                       capture_output=True, text=True)
+        push_result = subprocess.run(["git", "push", "origin", "main"],
+                                     capture_output=True, text=True, cwd="/workspace")
+        if push_result.returncode == 0:
+            print(f"✅ Git push 成功，{img_path} 已上传至 GitHub，CDN 链接已生效。")
+            return True
+        else:
+            err = push_result.stderr.strip()
+            print(f"⚠️ Git push 失败（可能无 GitHub token），钉钉消息已发送但图片链接暂时不可用。错误: {err}")
+            return False
+    except subprocess.CalledProcessError as e:
+        print(f"⚠️ Git 操作失败，钉钉消息已发送但图片链接暂时不可用。错误: {e.stderr if hasattr(e, 'stderr') else e}")
+        return False
+    except Exception as e:
+        print(f"⚠️ Git push 异常，钉钉消息已发送但图片链接暂时不可用。错误: {e}")
+        return False
+
 if __name__ == "__main__":
     print("📅 [验证开始] 正在检测大盘是否处于开盘交易状态...")
     if check_is_market_closed():
         print("😴 检测到今天非交易日，自动化工作流优雅休眠退出。")
     else:
-        # 💡 智能化总线判断：当前是中午还是下午收盘
-        current_hour = datetime.now().hour
-        # 北京时间 11:30~13:30 之间运行则判定为午盘
+        # 💡 智能化总线判断：当前是中午还是下午收盘（使用北京时间）
+        current_hour = datetime.now(BJ_TZ).hour
+        # 北京时间 11:00~13:59 之间运行则判定为午盘
         current_report_type = "midday" if 11 <= current_hour < 14 else "closing"
         
         print(f"🔄 第一步：启动数据清洗进程，当前判定时段为: {current_report_type}")
@@ -215,3 +255,6 @@ if __name__ == "__main__":
         
         print("🔑 第三步：向钉钉发送图文长图简报...")
         push_image_to_dingtalk(DINGTALK_WEBHOOK_URL, img_file, current_report_type)
+        
+        print("📤 第四步：尝试将长图推送到 GitHub（使 CDN 链接生效）...")
+        push_image_to_github(img_file)
